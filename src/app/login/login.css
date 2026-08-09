@@ -1,0 +1,22 @@
+.loginContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+.loginCard {
+  width: 100%;
+  max-width: 350px;
+  background-color: #FFFFFF;
+  border-radius: 26px;
+  padding: 27px;
+  align-items: center;
+}
+
+.alertModalCard {
+  width: 85%;
+  max-width: 310px;
+  background-color: #F7F7EB;
+  border-radius: 26px;
+  padding: 27px;
+  align-items: center;
+}

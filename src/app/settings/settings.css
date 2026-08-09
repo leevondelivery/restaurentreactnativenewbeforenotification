@@ -1,0 +1,236 @@
+.settingsContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+.settingsScrollContent {
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-top: 12px;
+  padding-bottom: 120px;
+  align-items: center;
+}
+
+/* Top Header Pill */
+.settingsTopHeaderPill {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  background-color: #F7F7EB;
+  border-radius: 26px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 26px;
+  padding-right: 26px;
+  margin-top: 8px;
+  margin-bottom: 20px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+.settingsTopHeaderText {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111111;
+}
+
+/* User Profile Card */
+.userProfileCard {
+  width: 100%;
+  max-width: 400px;
+  background-color: #E0D6BC;
+  border-radius: 26px;
+  padding: 20px;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 20px;
+  box-shadow: 0px 6px 14px rgba(0, 0, 0, 0.06);
+}
+
+.avatarCircle {
+  width: 72px;
+  height: 72px;
+  border-radius: 36px;
+  background-color: #1F1F1F;
+  justify-content: center;
+  align-items: center;
+  margin-right: 18px;
+}
+
+.avatarText {
+  color: #FFFFFF;
+  font-size: 30px;
+  font-weight: 700;
+}
+
+.profileInfo {
+  flex: 1;
+}
+
+.userNameText {
+  font-size: 24px;
+  font-weight: 700;
+  color: #111111;
+}
+
+.userPhoneRow {
+  flex-direction: row;
+  align-items: center;
+  margin-top: 4px;
+  gap: 6px;
+}
+
+.userPhoneText {
+  font-size: 16px;
+  font-weight: 500;
+  color: #555555;
+}
+
+/* Tan Menu Box */
+.settingsMenuBox {
+  width: 100%;
+  max-width: 400px;
+  background-color: #E0D6BC;
+  border-radius: 32px;
+  padding: 16px;
+  gap: 12px;
+  box-shadow: 0px 8px 18px rgba(0, 0, 0, 0.08);
+}
+
+/* Menu Row Items */
+.menuRowItem {
+  width: 100%;
+  height: 64px;
+  background-color: #F7F7EB;
+  border-radius: 32px;
+  padding-left: 22px;
+  padding-right: 22px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.menuLeftContent {
+  flex-direction: row;
+  align-items: center;
+}
+
+.menuIcon {
+  width: 26px;
+  align-items: center;
+}
+
+.menuTitleText {
+  font-size: 17px;
+  font-weight: 600;
+  color: #111111;
+  margin-left: 14px;
+}
+
+/* Delete Account Item */
+.deleteTitleText {
+  color: #DE5335;
+}
+
+/* Red Filled Logout Button */
+.logoutButtonItem {
+  width: 100%;
+  height: 64px;
+  background-color: #E35436;
+  border-radius: 32px;
+  padding-left: 22px;
+  padding-right: 22px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0px 4px 10px rgba(227, 84, 54, 0.3);
+}
+
+.logoutTitleText {
+  font-size: 17px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-left: 14px;
+}
+
+/* Delete Account Request Custom Modal Overlay */
+.deleteModalOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.45);
+  justify-content: center;
+  align-items: center;
+  padding-left: 24px;
+  padding-right: 24px;
+  z-index: 999999;
+}
+
+.deleteModalCard {
+  width: 85%;
+  max-width: 320px;
+  background-color: #F7F7EB;
+  border-radius: 28px;
+  padding-top: 24px;
+  padding-bottom: 26px;
+  padding-left: 24px;
+  padding-right: 24px;
+  align-items: center;
+  position: relative;
+  box-shadow: 0px 10px 20px rgba(0, 0, 0, 0.18);
+}
+
+.modalCloseButton {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  z-index: 10;
+}
+
+.deleteIconCircle {
+  width: 64px;
+  height: 64px;
+  border-radius: 32px;
+  background-color: #E35436;
+  justify-content: center;
+  align-items: center;
+  margin-top: 10px;
+  margin-bottom: 16px;
+  box-shadow: 0px 4px 8px rgba(227, 84, 54, 0.3);
+}
+
+.deleteModalTitle {
+  font-size: 21px;
+  font-weight: 700;
+  color: #111111;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.deleteModalBodyText {
+  font-size: 14px;
+  font-weight: 400;
+  color: #444444;
+  text-align: center;
+  line-height: 20px;
+  margin-bottom: 14px;
+}
+
+.gotItButton {
+  background-color: #E35436;
+  border-radius: 24px;
+  height: 48px;
+  width: 88%;
+  justify-content: center;
+  align-items: center;
+  margin-top: 8px;
+  box-shadow: 0px 4px 8px rgba(227, 84, 54, 0.25);
+}
+
+.gotItButtonText {
+  font-size: 16px;
+  font-weight: 700;
+  color: #FFFFFF;
+}

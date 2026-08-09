@@ -1,0 +1,235 @@
+.ordersContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+.ordersScrollContent {
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-top: 12px;
+  padding-bottom: 120px;
+  align-items: center;
+}
+
+/* Header Row */
+.ordersHeaderRow {
+  width: 100%;
+  max-width: 400px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin-top: 8px;
+  margin-bottom: 24px;
+}
+
+.ordersBackButtonCircle {
+  position: absolute;
+  left: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  background-color: #FFFFFF;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.06);
+}
+
+.ordersTopHeaderPill {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  background-color: #E0D6BC;
+  border-radius: 26px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 26px;
+  padding-right: 26px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+.ordersTopHeaderText {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111111;
+}
+
+/* Order Outer Card */
+.orderOuterCard {
+  width: 100%;
+  max-width: 400px;
+  background-color: #F7F7EB;
+  border-width: 1px;
+  border-color: #E6DFD1;
+  border-radius: 24px;
+  padding: 16px;
+  margin-bottom: 18px;
+  box-shadow: 0px 6px 14px rgba(0, 0, 0, 0.04);
+}
+
+/* Customer & Delivery Info Accordion Strip */
+.customerInfoAccordionStrip {
+  width: 100%;
+  background-color: #EFE8D8;
+  border-radius: 16px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 16px;
+  padding-right: 16px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.customerInfoLeft {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.customerInfoLabelText {
+  font-size: 14px;
+  font-weight: 600;
+  color: #444444;
+}
+
+/* Customer Expanded Info Container */
+.customerExpandedContent {
+  background-color: #EFE8D8;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+  gap: 6px;
+}
+
+.customerDetailText {
+  font-size: 14px;
+  color: #222222;
+  font-weight: 500;
+}
+
+/* Order Top Header Strip */
+.orderTopStrip {
+  width: 100%;
+  background-color: #E0D6BC;
+  border-radius: 14px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  padding-left: 16px;
+  padding-right: 16px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.orderIdText {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111111;
+}
+
+.orderDateText {
+  font-size: 13px;
+  font-weight: 500;
+  color: #666666;
+}
+
+/* Table Header Row */
+.tableHeaderRow {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+}
+
+.tableHeaderCol {
+  font-size: 13px;
+  font-weight: 700;
+  color: #555555;
+  letter-spacing: 0.5px;
+}
+
+/* Table Item Row */
+.tableItemRow {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.itemNameText {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111111;
+  flex: 2;
+}
+
+.itemQtyText {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333333;
+  flex: 1;
+  text-align: center;
+}
+
+.itemPriceText {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111111;
+  flex: 1;
+  text-align: right;
+}
+
+/* Divider Line */
+.orderDivider {
+  height: 1px;
+  background-color: #EAE3D2;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+/* Total Row */
+.totalRow {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+
+.totalLabelText {
+  font-size: 17px;
+  font-weight: 700;
+  color: #111111;
+}
+
+.totalValText {
+  font-size: 18px;
+  font-weight: 700;
+  color: #111111;
+}
+
+/* Dark Generate Invoice Button */
+.generateInvoiceButton {
+  width: 100%;
+  height: 48px;
+  background-color: #1E1E1E;
+  border-radius: 16px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.generateInvoiceText {
+  font-size: 15px;
+  font-weight: 700;
+  color: #FFFFFF;
+}

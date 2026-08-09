@@ -1,0 +1,261 @@
+.invoiceContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+@media print {
+  .invoiceHeaderRow,
+  .invoiceCloseCrossCircle,
+  .printReceiptButton,
+  nav,
+  footer {
+    display: none !important;
+  }
+}
+
+.invoiceScrollContent {
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-top: 12px;
+  padding-bottom: 120px;
+  align-items: center;
+}
+
+/* Header Row */
+.invoiceHeaderRow {
+  width: 100%;
+  max-width: 400px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin-top: 8px;
+  margin-bottom: 24px;
+}
+
+.invoiceBackButtonCircle {
+  position: absolute;
+  left: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  background-color: #FFFFFF;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.06);
+}
+
+.invoiceTopHeaderPill {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  background-color: #E0D6BC;
+  border-radius: 26px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 26px;
+  padding-right: 26px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+.invoiceTopHeaderText {
+  font-size: 20px;
+  font-weight: 700;
+  color: #111111;
+}
+
+/* Tan Outer Wrapper Card */
+.invoiceTanCardWrapper {
+  width: 100%;
+  max-width: 400px;
+  background-color: #E0D6BC;
+  border-radius: 30px;
+  padding: 16px;
+  position: relative;
+  box-shadow: 0px 8px 18px rgba(0, 0, 0, 0.08);
+}
+
+/* Overlapping Top Right Close Cross Button */
+.invoiceCloseCrossCircle {
+  position: absolute;
+  top: -12px;
+  right: 12px;
+  width: 38px;
+  height: 38px;
+  border-radius: 19px;
+  background-color: #FFFFFF;
+  justify-content: center;
+  align-items: center;
+  z-index: 10;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.12);
+}
+
+/* White Receipt Paper Container */
+.receiptPaperCard {
+  width: 100%;
+  background-color: #FFFFFF;
+  border-radius: 24px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+/* Restaurant Header Section */
+.restaurantHeaderSection {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.restaurantTitleRow {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.restaurantNameText {
+  font-family: monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111111;
+  letter-spacing: 0.5px;
+}
+
+.restaurantSubDetailText {
+  font-family: monospace;
+  font-size: 12px;
+  color: #555555;
+  margin-top: 2px;
+  text-align: center;
+}
+
+/* Dashed Line */
+.dashedDividerText {
+  font-family: monospace;
+  font-size: 12px;
+  color: #888888;
+  text-align: center;
+  margin-top: 6px;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+
+/* Order Info Section */
+.receiptOrderInfoSection {
+  margin-top: 6px;
+  margin-bottom: 6px;
+  gap: 4px;
+}
+
+.receiptOrderInfoLine {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111111;
+}
+
+/* Table Section */
+.receiptTableHeaderRow {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.receiptHeaderCol {
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #111111;
+}
+
+.receiptTableItemRow {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.receiptItemNameText {
+  font-family: monospace;
+  font-size: 14px;
+  color: #111111;
+  flex: 2;
+}
+
+.receiptItemQtyText {
+  font-family: monospace;
+  font-size: 14px;
+  color: #111111;
+  flex: 1;
+  text-align: center;
+}
+
+.receiptItemPriceText {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #111111;
+  flex: 1;
+  text-align: right;
+}
+
+/* Grand Total Row */
+.receiptGrandTotalRow {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  margin-bottom: 14px;
+}
+
+.receiptGrandTotalLabel {
+  font-family: monospace;
+  font-size: 17px;
+  font-weight: 700;
+  color: #111111;
+}
+
+.receiptGrandTotalVal {
+  font-family: monospace;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111111;
+}
+
+/* Thank You Footer */
+.receiptThankYouFooter {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.receiptThankYouText {
+  font-family: monospace;
+  font-size: 14px;
+  font-style: italic;
+  color: #333333;
+}
+
+/* Print Receipt Button */
+.printReceiptButton {
+  width: 100%;
+  height: 52px;
+  background-color: #1E1E1E;
+  border-radius: 26px;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.printReceiptText {
+  font-size: 16px;
+  font-weight: 700;
+  color: #FFFFFF;
+}

@@ -1,0 +1,40 @@
+.trackerContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+.trackerScrollContent {
+  padding: 24px;
+  padding-bottom: 110px;
+  align-items: center;
+}
+
+.trackerHeader {
+  align-items: center;
+  margin-top: 20px;
+  margin-bottom: 28px;
+}
+
+.trackerTitle {
+  font-size: 28px;
+  font-weight: 800;
+  color: #000000;
+  margin-top: 10px;
+}
+
+.trackerSubtitle {
+  font-size: 15px;
+  color: #666666;
+  margin-top: 6px;
+  text-align: center;
+}
+
+.trackerCard {
+  width: 100%;
+  max-width: 420px;
+  background-color: #FFFFFF;
+  border-radius: 24px;
+  padding: 32px;
+  align-items: center;
+  box-shadow: 0px 6px 14px rgba(0, 0, 0, 0.08);
+}

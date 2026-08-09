@@ -1,0 +1,52 @@
+.paymentsContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+.paymentsScrollContent {
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-top: 12px;
+  padding-bottom: 120px;
+  align-items: center;
+}
+
+.paymentsHeaderRow {
+  width: 100%;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 16px;
+  position: relative;
+}
+
+.paymentsSummaryRow {
+  width: 100%;
+  flex-direction: row;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.paymentsStatCard {
+  flex: 1;
+  background-color: #E8E2D0;
+  border-radius: 16px;
+  padding: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.paymentsStatLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888888;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.paymentsStatValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111111;
+  text-align: center;
+}

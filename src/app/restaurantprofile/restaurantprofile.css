@@ -1,0 +1,12 @@
+.profileContainer {
+  flex: 1;
+  background-color: #F7F7EB;
+}
+
+.profileScrollContent {
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-top: 12px;
+  padding-bottom: 120px;
+  align-items: center;
+}
