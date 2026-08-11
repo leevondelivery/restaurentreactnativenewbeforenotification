@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, useColorScheme } from 'react-native';
+import { View, useColorScheme, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DarkTheme, DefaultTheme, ThemeProvider, Stack, usePathname, useRouter, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -10,16 +10,23 @@ import store from '@/store/store';
 import { OrdersProvider } from '@/context/OrdersContext';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import firebase from '@react-native-firebase/app';
-import messaging from '@react-native-firebase/messaging';
-import notifee, { EventType } from '@notifee/react-native';
 import { displayOrderNotification, stopOrderNotificationSound, setupNotificationChannel, initFCMToken, extractRestId, markOrderAsNotified } from '@/services/NotificationService';
 
-if (!firebase.apps || firebase.apps.length === 0) {
-  try {
-    firebase.initializeApp();
-  } catch (e) {
-    console.warn('Firebase layout safe init notice:', e);
+// firebase, messaging, notifee are native-only — skip on web
+let firebase, messaging, notifee, EventType;
+if (Platform.OS !== 'web') {
+  firebase = require('@react-native-firebase/app').default;
+  messaging = require('@react-native-firebase/messaging').default;
+  const notifeeModule = require('@notifee/react-native');
+  notifee = notifeeModule.default;
+  EventType = notifeeModule.EventType;
+
+  if (!firebase.apps || firebase.apps.length === 0) {
+    try {
+      firebase.initializeApp();
+    } catch (e) {
+      console.warn('Firebase layout safe init notice:', e);
+    }
   }
 }
 
@@ -58,6 +65,9 @@ function AppLayout() {
 
   useEffect(() => {
     SplashScreen.hideAsync();
+
+    if (Platform.OS === 'web') return; // notifications not supported on web
+
     setupNotificationChannel();
 
     // Request Android 13+ Notification Permission & Init FCM

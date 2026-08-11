@@ -321,26 +321,28 @@ export const OrdersProvider = ({ children }) => {
         }
 
         // grossTotal = totalPrice (raw order amount before commission)
-        // grandTotal = grossTotal - commission% of grossTotal (what restaurant earns)
+        // grandTotal = totalPriceAfterCommission sent by backend (what restaurant earns)
         // totalCommissionCut = the commission amount deducted (what platform takes)
         const grossTotal = Number(targetOrder.totalPrice || 0);
         const commissionRate = Number(
           targetOrder.commissionRate || restaurantInfo.commission || 0
         );
-        const grandTotal = commissionRate > 0
+        const calculatedGrandTotal = commissionRate > 0
           ? parseFloat((grossTotal * (1 - commissionRate / 100)).toFixed(2))
           : grossTotal;
+        const grandTotal = Number(
+          targetOrder.totalPriceAfterCommission ?? targetOrder.netEarnings ?? calculatedGrandTotal
+        );
         const totalCommissionCut = parseFloat((grossTotal - grandTotal).toFixed(2));
 
         const pendingPayload = {
           restaurantId: String(asyncRestId),
           restaurantName: asyncRestName,
           grossTotal,   // totalPrice from the order
-          grandTotal,   // grandTotal from the order (after commission deduction)
+          grandTotal,   // totalPriceAfterCommission from the order (after commission deduction)
           commissionRate,
           totalCommissionCut,
           date: acceptedAtStr,
-          orderId: String(targetOrder.orderId || orderIdVal),
         };
 
         console.log('pendingpayments payload being sent:', JSON.stringify(pendingPayload));
@@ -348,9 +350,13 @@ export const OrdersProvider = ({ children }) => {
         try {
           const ppRes = await insertPendingPayment(pendingPayload);
           const ppData = await ppRes.json();
-          console.log('pendingpayments response:', ppData);
+          if (!ppRes.ok) {
+            console.error('pendingpayments FAILED — HTTP', ppRes.status, JSON.stringify(ppData));
+          } else {
+            console.log('pendingpayments SUCCESS:', ppData);
+          }
         } catch (ppErr) {
-          console.warn('OrdersContext: pendingpayments insert warning:', ppErr.message);
+          console.error('pendingpayments ERROR (network/timeout):', ppErr.message, '\nPayload was:', JSON.stringify(pendingPayload));
         }
 
         // Create accepted order record locally for immediate feedback
