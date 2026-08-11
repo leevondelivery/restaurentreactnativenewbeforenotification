@@ -187,8 +187,8 @@
 
 /* Divider Line */
 .orderDivider {
-  height: 1px;
-  background-color: #EAE3D2;
+  height: 2.5px;
+  background-color: #111111;
   margin-top: 10px;
   margin-bottom: 10px;
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -15,10 +15,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useDispatch } from 'react-redux';
-import { setUser } from '@/store/userSlice';
+import { setUser, clearUser } from '@/store/userSlice';
+import { loginUser } from '@/services/api';
+import { initFCMToken } from '@/services/NotificationService';
+import messaging from '@react-native-firebase/messaging';
 
 import CustomLoader from '@/components/CustomLoader';
 import './login.css';
@@ -30,6 +32,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Custom Alert Modal State
   const [alertVisible, setAlertVisible] = useState(false);
@@ -42,37 +45,64 @@ export default function LoginScreen() {
     setAlertVisible(true);
   };
 
-  // Check if user is already logged in
-  useEffect(() => {
-    checkLoggedInUser();
-  }, []);
+  // Check if user is already logged in whenever screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      checkLoggedInUser();
+    }, [])
+  );
+
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
   const checkLoggedInUser = async () => {
     try {
       const storedUser = await AsyncStorage.getItem('userData');
+      const lastActiveStr = await AsyncStorage.getItem('lastActiveTimestamp');
+
       if (storedUser) {
-        router.replace('/home');
+        const parsed = JSON.parse(storedUser);
+        const now = Date.now();
+        const lastActive = Number(lastActiveStr || 0);
+
+        // 1. Check if session has exceeded 30 days of inactivity
+        if (lastActive > 0 && now - lastActive > THIRTY_DAYS_MS) {
+          console.log('[Auth] Session expired (over 30 days inactive). Logging out user...');
+          await AsyncStorage.multiRemove([
+            'userData',
+            'userToken',
+            'restId',
+            'restaurantInfo',
+            'lastActiveTimestamp',
+            'isLoggedIn',
+          ]);
+          dispatch(clearUser());
+          setIsCheckingAuth(false);
+          return; // Remain on login screen
+        }
+
+        // 2. Session is valid — slide/extend 30-day window from today!
+        if (parsed && (parsed.restId || parsed.restaurantId || parsed.email || parsed._id || parsed.phone)) {
+          await AsyncStorage.setItem('lastActiveTimestamp', now.toString());
+          dispatch(setUser(parsed));
+          initFCMToken(parsed);
+          router.replace('/home');
+          return;
+        } else {
+          await AsyncStorage.multiRemove(['userData', 'userToken', 'restId', 'lastActiveTimestamp']);
+          dispatch(clearUser());
+          setIsCheckingAuth(false);
+        }
+      } else {
+        dispatch(clearUser());
+        setIsCheckingAuth(false);
       }
     } catch (err) {
       console.error('Error checking stored user session:', err);
+      dispatch(clearUser());
+      setIsCheckingAuth(false);
     }
   };
 
-  const getApiUrl = () => {
-    const hostUri =
-      Constants.expoConfig?.hostUri ||
-      Constants.manifest2?.extra?.expoGo?.developer?.tool;
-    if (hostUri) {
-      const ip = hostUri.split(':')[0];
-      if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-        return `http://${ip}:5000/api/auth/login`;
-      }
-    }
-    if (Platform.OS === 'web') {
-      return 'http://localhost:5000/api/auth/login';
-    }
-    return 'http://10.134.81.192:5000/api/auth/login';
-  };
 
   const handleLogin = async () => {
     if (!email.trim() && !password.trim()) {
@@ -90,37 +120,32 @@ export default function LoginScreen() {
 
     setIsLoading(true);
 
-    const API_URL = getApiUrl();
-    console.log('Attempting login request to:', API_URL);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
     try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          email: email.trim(),
-          phone: email.trim(),
-          mobileNumber: email.trim(),
-          password: password.trim(),
-        }),
-      });
+      let currentFcmToken = '';
+      try {
+        currentFcmToken = (await messaging().getToken()) || '';
+      } catch (e) {}
 
-      clearTimeout(timeoutId);
+      const response = await loginUser(email.trim(), password.trim(), currentFcmToken);
       const data = await response.json();
 
       if (response.ok && data.success) {
         // Save user fields and session to AsyncStorage
+        const effectiveRestId = String(
+          data.user?.restId ||
+          data.user?.restaurantId ||
+          data.user?.restaurant_id ||
+          data.user?._id ||
+          data.user?.id ||
+          ''
+        ).trim();
+
         const userObj = {
+          _id: data.user?._id || data.user?.id || '',
           name: data.user?.name || '',
           email: data.user?.email || email.trim(),
           phone: data.user?.phone || data.user?.mobileNumber || '',
-          restId: data.user?.restId || '',
+          restId: effectiveRestId,
           restLocation: data.user?.restLocation || '',
           address: data.user?.address || '',
           fssai: data.user?.fssai || '',
@@ -131,12 +156,20 @@ export default function LoginScreen() {
         };
 
         await AsyncStorage.setItem('userData', JSON.stringify(userObj));
+        await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
+        await AsyncStorage.removeItem('battery_prompt_dismissed');
+        if (effectiveRestId) {
+          await AsyncStorage.setItem('restId', effectiveRestId);
+        }
         if (data.token) {
           await AsyncStorage.setItem('userToken', data.token);
         }
 
         // Dispatch to Redux — makes userData instantly available everywhere
         dispatch(setUser(userObj));
+
+        // Initialize FCM & Send device token to backend
+        await initFCMToken(userObj);
 
         setIsLoading(false);
         router.replace('/home');
@@ -145,7 +178,6 @@ export default function LoginScreen() {
         showAlert(data.message || 'Email and password is incorrect');
       }
     } catch (error) {
-      clearTimeout(timeoutId);
       setIsLoading(false);
       console.error('Login request error:', error);
       if (error.name === 'AbortError') {
@@ -155,6 +187,19 @@ export default function LoginScreen() {
       }
     }
   };
+
+  if (isCheckingAuth) {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F7F7EB" />
+        <CustomLoader
+          visible={true}
+          title="Loading..."
+          subtitle="Please wait"
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>

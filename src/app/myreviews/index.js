@@ -8,42 +8,49 @@ import {
   StatusBar,
   TouchableOpacity,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
+import { fetchReviews as apiFetchReviews } from '@/services/api';
 
 import CustomLoader from '@/components/CustomLoader';
+import { getDisplayOrderId } from '../orders';
 
 import './myreviews.css';
 
 export default function MyReviewsScreen() {
   const router = useRouter();
   const [reviews, setReviews] = useState([]);
+  const safeReviews = Array.isArray(reviews) ? reviews : [];
   const [loading, setLoading] = useState(true);
+
+  const isNavigatingRef = React.useRef(false);
+
+  const handleBack = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/settings');
+    }
+  };
+
+  useEffect(() => {
+    const onBackPress = () => {
+      handleBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     fetchReviews();
   }, []);
-
-  const getApiUrl = (restaurantId) => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/reviews?restaurant_id=${encodeURIComponent(restaurantId || '')}`;
-  };
 
   const fetchReviews = async () => {
     try {
@@ -60,15 +67,10 @@ export default function MyReviewsScreen() {
           '';
       }
 
-      const API_URL = getApiUrl(targetRestId);
-      console.log('Fetching reviews from:', API_URL);
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const response = await fetch(API_URL, {
-        signal: controller.signal,
-      });
+      const response = await apiFetchReviews(targetRestId, controller.signal);
 
       clearTimeout(timeoutId);
       const data = await response.json();
@@ -93,43 +95,27 @@ export default function MyReviewsScreen() {
     }
   };
 
-
-
-  const isNavigatingRef = React.useRef(false);
-
-  const handleBack = () => {
-    if (isNavigatingRef.current) return;
-    isNavigatingRef.current = true;
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/settings');
-    }
-  };
-
   const getIstDateTime = (rev) => {
     if (rev.date && rev.time) {
-      return `${rev.date}, ${rev.time} IST`;
+      return `${rev.date}, ${rev.time}`;
     }
     const rawDate = rev.createdAt || rev.date;
     if (!rawDate) {
-      return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST';
+      return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
     }
 
     const d = new Date(rawDate);
     if (isNaN(d.getTime())) return String(rawDate);
 
-    return (
-      d.toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        day: 'numeric',
-        month: 'numeric',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-      }) + ' IST'
-    );
+    return d.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric',
+      month: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
   };
 
   const getItemsList = (rev) => {
@@ -200,22 +186,22 @@ export default function MyReviewsScreen() {
               <Text style={styles.statLabel}>AVERAGE RATING</Text>
               <View style={styles.statValueRow}>
                 <Text style={styles.statValue}>
-                  {reviews.length === 0
+                  {safeReviews.length === 0
                     ? '0.0'
-                    : (reviews.reduce((sum, r) => sum + (r.restaurantRating || r.rating || 0), 0) / reviews.length).toFixed(1)}
+                    : (safeReviews.reduce((sum, r) => sum + (r?.restaurantRating || r?.rating || 0), 0) / safeReviews.length).toFixed(1)}
                 </Text>
                 <Ionicons name="star" size={18} color="#C8A84B" style={{ marginLeft: 4 }} />
               </View>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statLabel}>TOTAL REVIEWS</Text>
-              <Text style={styles.statValue}>{reviews.length}</Text>
+              <Text style={styles.statValue}>{safeReviews.length}</Text>
             </View>
           </View>
         )}
 
         {/* Empty state */}
-        {!loading && reviews.length === 0 && (
+        {!loading && safeReviews.length === 0 && (
           <View style={styles.emptyContainer}>
             <Ionicons name="star-outline" size={64} color="#B0A080" />
             <Text style={styles.emptyTitle}>No Reviews Yet</Text>
@@ -232,8 +218,9 @@ export default function MyReviewsScreen() {
           </View>
         )}
 
-        {reviews.map((rev) => {
-            const orderIdVal = rev.orderid || rev.orderId || 'ORD-00000';
+        {safeReviews.map((rev) => {
+            if (!rev) return null;
+            const orderIdVal = getDisplayOrderId(rev);
             const istDateStr = getIstDateTime(rev);
             const itemsList = getItemsList(rev);
             const ratingVal = rev.restaurantRating || rev.rating || 5;
@@ -250,11 +237,11 @@ export default function MyReviewsScreen() {
 
                 {/* 1st: Table Headers for ITEM, QTY, PRICE */}
                 <View style={styles.tableHeaderRow}>
-                  <Text style={[styles.tableHeaderCol, { flex: 2 }]}>ITEM</Text>
-                  <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center' }]}>
+                  <Text style={[styles.tableHeaderCol, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>ITEM</Text>
+                  <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>
                     QTY
                   </Text>
-                  <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'right' }]}>
+                  <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>
                     PRICE
                   </Text>
                 </View>
@@ -262,9 +249,9 @@ export default function MyReviewsScreen() {
                 {/* Table Items */}
                 {itemsList.map((item, idx) => (
                   <View key={idx} style={styles.tableItemRow}>
-                    <Text style={styles.itemNameText}>{item.name}</Text>
-                    <Text style={styles.itemQtyText}>x{item.quantity}</Text>
-                    <Text style={styles.itemPriceText}>₹{item.price}</Text>
+                    <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
+                    <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>x{item.quantity}</Text>
+                    <Text style={[styles.itemPriceText, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>₹{item.price}</Text>
                   </View>
                 ))}
 
@@ -295,6 +282,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 120,
@@ -307,7 +295,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    marginTop: 8,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     marginBottom: 24,
   },
   backButtonCircle: {
@@ -423,8 +411,8 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   orderDivider: {
-    height: 1,
-    backgroundColor: '#EAE3D2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 10,
   },
   ratingRow: {
@@ -491,10 +479,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 60,
+    paddingVertical: 20,
     paddingHorizontal: 32,
+    minHeight: 300,
   },
   emptyTitle: {
     fontSize: 22,

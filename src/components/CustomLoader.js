@@ -87,7 +87,7 @@ export default function CustomLoader({
 const styles = StyleSheet.create({
   overlayContainer: {
     flex: 1,
-    backgroundColor: 'rgba(247, 247, 235, 0.96)',
+    backgroundColor: '#F7F7EB',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,

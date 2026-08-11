@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    marginTop: 8,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     marginBottom: 24,
   },
   backButtonCircle: {

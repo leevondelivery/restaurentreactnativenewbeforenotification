@@ -10,38 +10,23 @@ import {
   RefreshControl,
   ActivityIndicator,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
+import { useOrders } from '@/context/OrdersContext';
+import { stopOrderNotificationSound } from '@/services/NotificationService';
+import { getDisplayOrderId } from '../orders';
 
 import './notifications.css';
 
-const getBaseApiUrl = () => {
-  let baseUrl = 'http://localhost:5000';
-  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-    baseUrl = `http://${window.location.hostname}:5000`;
-  } else {
-    const hostUri =
-      Constants.expoConfig?.hostUri ||
-      Constants.manifest2?.extra?.expoGo?.developer?.tool;
-    if (hostUri) {
-      const ip = hostUri.split(':')[0];
-      if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-        baseUrl = `http://${ip}:5000`;
-      }
-    }
-  }
-  return baseUrl;
-};
-
 export default function NotificationsScreen() {
-  const [incomingOrders, setIncomingOrders] = useState([]);
-  const [commissionRate, setCommissionRate] = useState(12);
+  const router = useRouter();
+  const { incomingOrders, acceptOrder: contextAcceptOrder, rejectOrder: contextRejectOrder, fetchGlobalOrders, loading, restaurantInfo } = useOrders();
+  const safeIncomingOrders = Array.isArray(incomingOrders) ? incomingOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [rejectingLoading, setRejectingLoading] = useState(false);
   const [acceptingLoading, setAcceptingLoading] = useState(false);
-  const pollingTimerRef = useRef(null);
 
   // Custom Reject Confirmation Modal State
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
@@ -51,77 +36,30 @@ export default function NotificationsScreen() {
   const [acceptModalVisible, setAcceptModalVisible] = useState(false);
   const [orderToAccept, setOrderToAccept] = useState(null);
 
-  // Fetch incoming orders from MongoDB DB
-  const fetchIncomingOrdersFromDB = useCallback(async () => {
-    try {
-      const storedUserStr = await AsyncStorage.getItem('userData');
-      const storedRestId = await AsyncStorage.getItem('restId');
-      const storedCommission = await AsyncStorage.getItem('commission');
-
-      let restId = '';
-      let comm = storedCommission !== null ? Number(storedCommission) : 12;
-
-      if (storedUserStr) {
-        try {
-          const u = JSON.parse(storedUserStr);
-          restId = u?.restId || u?.restaurantId || u?.restaurant_id || u?._id || u?.id || '';
-          if (u?.commission !== undefined) comm = Number(u.commission);
-        } catch (e) {}
+  // Device level Back Button / Gesture Navigation Compatibility
+  useEffect(() => {
+    const onBackPress = () => {
+      if (rejectModalVisible) {
+        setRejectModalVisible(false);
+        return true;
       }
-      if (!restId && storedRestId) {
-        restId = storedRestId;
+      if (acceptModalVisible) {
+        setAcceptModalVisible(false);
+        return true;
       }
+      router.replace('/home');
+      return true;
+    };
 
-      setCommissionRate(comm);
-
-      const baseUrl = getBaseApiUrl();
-      const apiUrl = `${baseUrl}/api/orders/incoming?restaurantId=${encodeURIComponent(restId)}`;
-
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 4000);
-
-      const response = await fetch(apiUrl, { signal: controller.signal });
-      clearTimeout(tid);
-
-      if (response.ok) {
-        const data = await response.json();
-        const fetchedList = data.orders || data.incomingOrders || [];
-        const filteredList = Array.isArray(fetchedList)
-          ? fetchedList.filter((o) => {
-              if (!restId) return false;
-              const itemRestId = String(
-                o.restaurantId || o.restId || o.restaurant_id || o.storeId || o.vendorId || o.restaurant || ''
-              ).trim();
-              return itemRestId === String(restId).trim();
-            })
-          : [];
-        setIncomingOrders(filteredList);
-      }
-    } catch (err) {
-      console.log('Incoming Orders DB fetch notice:', err.message);
-    }
-  }, []);
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [rejectModalVisible, acceptModalVisible, router]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchIncomingOrdersFromDB();
+    await fetchGlobalOrders(false);
     setRefreshing(false);
   };
-
-  // 5-Second Background Polling Loop
-  useEffect(() => {
-    fetchIncomingOrdersFromDB();
-
-    pollingTimerRef.current = setInterval(() => {
-      fetchIncomingOrdersFromDB();
-    }, 5000);
-
-    return () => {
-      if (pollingTimerRef.current) {
-        clearInterval(pollingTimerRef.current);
-      }
-    };
-  }, [fetchIncomingOrdersFromDB]);
 
   // Open custom styled reject modal
   const handleOpenRejectModal = (order) => {
@@ -130,39 +68,16 @@ export default function NotificationsScreen() {
   };
 
   // Confirm Reject Action
-  // Deletes record from orders & orderstatuses collections, and moves to rejectedorders collection
   const handleConfirmReject = async () => {
     if (!orderToReject) return;
-    const targetOrderId = orderToReject.orderId || orderToReject._id;
+    const targetOrderId = orderToReject?.orderId || orderToReject?._id;
     setRejectingLoading(true);
 
     try {
-      const baseUrl = getBaseApiUrl();
-      const primaryUrl = `${baseUrl}/api/orders/reject-order`;
-
-      console.log(`Sending reject order request for #${targetOrderId} to ${primaryUrl}`);
-
-      const response = await fetch(primaryUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderId: targetOrderId,
-          orderData: {
-            ...orderToReject,
-            commission: commissionRate,
-          },
-          commission: commissionRate,
-        }),
-      });
-
-      const json = await response.json();
-      console.log('Reject order response:', json);
-
-      // Locally remove rejected order from UI immediately
-      setIncomingOrders((prev) =>
-        prev.filter((o) => (o.orderId || o._id) !== targetOrderId)
-      );
-
+      if (targetOrderId) {
+        await contextRejectOrder(targetOrderId);
+        stopOrderNotificationSound(targetOrderId);
+      }
       setRejectModalVisible(false);
       setOrderToReject(null);
     } catch (err) {
@@ -179,109 +94,18 @@ export default function NotificationsScreen() {
   };
 
   // Confirm Accept Order Action
-  // Moves order to acceptedbyrestorents collection with selected prep time (5m, 10m, 20m, 30m, or 0 for Items Ready)
-  // Also inserts a record into pendingpayments collection for this restaurant
   const handleConfirmAccept = async (prepMinutes) => {
     if (!orderToAccept) return;
-    const targetOrderId = orderToAccept.orderId || orderToAccept._id;
+    const targetOrderId = orderToAccept?.orderId || orderToAccept?._id;
     const prepMins = Number(prepMinutes || 0);
-    const acceptedAtStr = new Date().toISOString();
-    const computedPrepEnd = new Date(Date.now() + prepMins * 60 * 1000).toISOString();
 
     setAcceptingLoading(true);
 
     try {
-      const baseUrl = getBaseApiUrl();
-      const primaryUrl = `${baseUrl}/api/orders/accept-order`;
-
-      console.log(`Sending accept order request for #${targetOrderId} with prepTime ${prepMins}m to ${primaryUrl}`);
-
-      // --- Step 1: Accept Order (errors here do NOT block pendingpayments) ---
-      try {
-        const response = await fetch(primaryUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orderId: targetOrderId,
-            preparationTime: prepMins,
-            estimatedPrepEndTime: computedPrepEnd,
-            orderData: {
-              ...orderToAccept,
-              commission: commissionRate,
-            },
-            commission: commissionRate,
-          }),
-        });
-        const json = await response.json();
-        console.log('Accept order response:', json);
-      } catch (acceptErr) {
-        console.warn('notifications: accept-order warning (continuing to pendingpayments):', acceptErr.message);
+      if (targetOrderId) {
+        await contextAcceptOrder(orderToAccept, prepMins);
+        stopOrderNotificationSound(targetOrderId);
       }
-
-      // --- Step 2: Insert into pendingpayments — always runs, independent of step 1 ---
-      let asyncRestId = '';
-      let asyncRestName = orderToAccept.restaurantName || '';
-      try {
-        const storedRestId = await AsyncStorage.getItem('restId');
-        const storedUserStr = await AsyncStorage.getItem('userData');
-        if (storedRestId) asyncRestId = storedRestId;
-        if (storedUserStr) {
-          const u = JSON.parse(storedUserStr);
-          asyncRestId =
-            storedRestId ||
-            u?.restId ||
-            u?.restaurantId ||
-            u?.restaurant_id ||
-            u?._id ||
-            asyncRestId;
-          asyncRestName =
-            u?.name ||
-            u?.restaurantName ||
-            u?.restName ||
-            asyncRestName;
-        }
-      } catch (_e) {
-        console.warn('notifications: could not read restId/userData from AsyncStorage for pendingpayments');
-      }
-
-      const grossTotal = Number(orderToAccept.totalPrice || 0);
-      const commRate = Number(orderToAccept.commissionRate || commissionRate || 0);
-      // grandTotal = grossTotal minus commission % (what restaurant actually earns)
-      const grandTotal = commRate > 0
-        ? parseFloat((grossTotal * (1 - commRate / 100)).toFixed(2))
-        : grossTotal;
-      const totalCommissionCut = parseFloat((grossTotal - grandTotal).toFixed(2));
-
-      const pendingPayload = {
-        restaurantId: String(asyncRestId),
-        restaurantName: asyncRestName,
-        grossTotal,
-        grandTotal,
-        commissionRate: commRate,
-        totalCommissionCut,
-        date: acceptedAtStr,
-        orderId: String(targetOrderId),
-      };
-
-      console.log('pendingpayments payload:', JSON.stringify(pendingPayload));
-
-      try {
-        const ppRes = await fetch(`${baseUrl}/api/pendingpayments`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(pendingPayload),
-        });
-        const ppData = await ppRes.json();
-        console.log('pendingpayments response:', ppData);
-      } catch (ppErr) {
-        console.warn('notifications: pendingpayments insert warning:', ppErr.message);
-      }
-
-      // Locally remove accepted order from incoming UI immediately
-      setIncomingOrders((prev) =>
-        prev.filter((o) => (o.orderId || o._id) !== targetOrderId)
-      );
-
       setAcceptModalVisible(false);
       setOrderToAccept(null);
     } catch (err) {
@@ -298,7 +122,7 @@ export default function NotificationsScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          incomingOrders.length === 0 && styles.scrollContentEmpty,
+          safeIncomingOrders.length === 0 && styles.scrollContentEmpty,
         ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -316,13 +140,13 @@ export default function NotificationsScreen() {
           <Text style={styles.topHeaderText}>Alerts</Text>
         </View>
 
-        {incomingOrders.length === 0 ? (
+        {safeIncomingOrders.length === 0 ? (
           /* Empty State when no incoming orders exist in DB */
           <View style={styles.emptyContainer}>
             <Ionicons name="notifications-off-outline" size={64} color="#9B8F6E" />
             <Text style={styles.emptyTitle}>No Alerts Yet</Text>
             <Text style={styles.emptySubtitle}>
-              New customer orders from the DB will appear here in real-time.
+              New incoming customer orders will appear here.
             </Text>
             <TouchableOpacity
               style={styles.refreshButton}
@@ -335,8 +159,8 @@ export default function NotificationsScreen() {
           </View>
         ) : (
           /* Render incoming orders fetched from MongoDB */
-          incomingOrders.map((order) => {
-            const orderIdVal = order.orderId || order._id || 'ORD-00000';
+          safeIncomingOrders.map((order) => {
+            const orderIdVal = getDisplayOrderId(order);
             const customerName = order.userName || order.customerName || 'Customer';
             const paymentStatus = order.paymentStatus || 'Paid';
 
@@ -354,11 +178,15 @@ export default function NotificationsScreen() {
 
             const items = order.items && order.items.length > 0 ? order.items : [];
 
+            const commRate = Number(
+              order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12
+            );
+
             // Calculate price after commission discount
             const itemCalculations = items.map((it) => {
               const rawPrice = it.originalPrice ?? it.price ?? 0;
               const discountedPrice =
-                it.priceAfterCommission ?? rawPrice * (1 - commissionRate / 100);
+                it.priceAfterCommission ?? rawPrice * (1 - commRate / 100);
               const qty = it.quantity || 1;
               const lineTotal = discountedPrice * qty;
               return {
@@ -375,7 +203,7 @@ export default function NotificationsScreen() {
               0
             );
 
-            const keepPercentage = 100 - commissionRate;
+            const keepPercentage = 100 - commRate;
 
             return (
               <View key={order._id || orderIdVal} style={styles.incomingCard}>
@@ -402,20 +230,20 @@ export default function NotificationsScreen() {
                 {/* Items Table */}
                 <View style={styles.itemsTable}>
                   <View style={styles.tableHeader}>
-                    <Text style={[styles.colHeader, { flex: 2 }]}>ITEM</Text>
-                    <Text style={[styles.colHeader, { flex: 1, textAlign: 'center' }]}>
+                    <Text style={[styles.colHeader, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>ITEM</Text>
+                    <Text style={[styles.colHeader, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>
                       QTY
                     </Text>
-                    <Text style={[styles.colHeader, { flex: 1, textAlign: 'right' }]}>
+                    <Text style={[styles.colHeader, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>
                       NET PRICE
                     </Text>
                   </View>
 
                   {itemCalculations.map((it, idx) => (
                     <View key={idx} style={styles.tableRow}>
-                      <Text style={styles.itemName}>{it.name}</Text>
-                      <Text style={styles.itemQty}>x{it.qty}</Text>
-                      <Text style={styles.itemPrice}>
+                      <Text style={[styles.itemName, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{it.name}</Text>
+                      <Text style={[styles.itemQty, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>x{it.qty}</Text>
+                      <Text style={[styles.itemPrice, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>
                         ₹{Number(it.discountedPrice).toFixed(2)}
                       </Text>
                     </View>
@@ -426,9 +254,7 @@ export default function NotificationsScreen() {
 
                 {/* Net Earnings Summary */}
                 <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>
-                    Net Earnings ({keepPercentage}% after {commissionRate}% commission)
-                  </Text>
+                  <Text style={styles.summaryLabel}>Net Earnings</Text>
                   <Text style={styles.summaryVal}>
                     ₹{Number(netRestaurantTotal).toFixed(2)}
                   </Text>
@@ -614,8 +440,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
-    paddingTop: 24,
+    paddingTop: 12,
     paddingBottom: 120,
     alignItems: 'center',
   },
@@ -630,7 +457,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     paddingVertical: 12,
     paddingHorizontal: 26,
-    marginTop: 8,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     marginBottom: 20,
   },
   topHeaderText: {
@@ -643,7 +470,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
-    paddingTop: 80,
+    paddingVertical: 20,
+    minHeight: 350,
   },
   emptyTitle: {
     fontSize: 22,
@@ -785,8 +613,8 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   divider: {
-    height: 1,
-    backgroundColor: '#EAE3D2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 12,
   },
   summaryRow: {

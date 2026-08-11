@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
+import { updateRestaurantTimings } from '@/services/api';
 
 import CustomLoader from '@/components/CustomLoader';
 
@@ -127,23 +128,6 @@ export default function RestaurantProfileScreen() {
     return `${hStr}:${m}`;
   };
 
-  const getApiUrl = () => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/restaurant/timings`;
-  };
 
   const isNavigatingRef = React.useRef(false);
 
@@ -170,8 +154,6 @@ export default function RestaurantProfileScreen() {
 
     try {
       setSaving(true);
-      const API_URL = getApiUrl();
-      console.log('Sending update timings request to:', API_URL);
 
       const targetRestId =
         userData?.restId ||
@@ -181,18 +163,12 @@ export default function RestaurantProfileScreen() {
         '';
       const targetPhone = userData?.phone || userData?.mobileNumber || '';
 
-      const response = await fetch(API_URL, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: userData?._id,
-          restId: targetRestId,
-          phone: targetPhone,
-          openTime: formattedOpen,
-          closeTime: formattedClose,
-        }),
+      const response = await updateRestaurantTimings({
+        userId: userData?._id,
+        restId: targetRestId,
+        phone: targetPhone,
+        openTime: formattedOpen,
+        closeTime: formattedClose,
       });
 
       const data = await response.json();
@@ -668,7 +644,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
-    marginTop: 4,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     position: 'relative',
     height: 48,
   },

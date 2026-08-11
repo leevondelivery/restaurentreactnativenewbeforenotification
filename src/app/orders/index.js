@@ -21,18 +21,55 @@ import { useOrders } from '@/context/OrdersContext';
 
 import './orders.css';
 
+export const getDisplayOrderId = (order) => {
+  if (!order) return 'ORD-00000';
+
+  // Extract raw order ID directly from MongoDB schema fields
+  const rawId =
+    order.orderId ||
+    order.order_id ||
+    order.displayOrderId ||
+    order.customOrderId ||
+    order.orderNumber ||
+    order.id ||
+    order._id ||
+    '';
+
+  const clean = String(rawId).trim();
+  if (!clean) return 'ORD-00000';
+
+  // If orderId accidentally equals userId, fallback to order._id to avoid displaying user ID
+  if (order.userId && clean === String(order.userId).trim() && order._id) {
+    const fallback = String(order._id).trim();
+    if (/^[a-f0-9]{24}$/i.test(fallback)) {
+      return `ORD-${fallback.slice(-6).toUpperCase()}`;
+    }
+    return fallback;
+  }
+
+  if (/^ORD-/i.test(clean)) return clean.toUpperCase();
+
+  // Format 24-char Mongo ObjectId hex string into short ORD-XXXXXX
+  if (/^[a-f0-9]{24}$/i.test(clean)) {
+    return `ORD-${clean.slice(-6).toUpperCase()}`;
+  }
+
+  return clean;
+};
+
 // Live Preparation Countdown Badge Component
 function PrepTimerBadge({ order }) {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const targetEndTimeRef = useRef(0);
 
   useEffect(() => {
-    const acceptedAtMs = order.acceptedAt
+    if (!order) return;
+    const acceptedAtMs = order?.acceptedAt
       ? new Date(order.acceptedAt).getTime()
       : Date.now();
 
-    const prepMins = order.preparationTime || 15;
-    const estimatedPrepEndTimeMs = order.estimatedPrepEndTime
+    const prepMins = order?.preparationTime || 15;
+    const estimatedPrepEndTimeMs = order?.estimatedPrepEndTime
       ? new Date(order.estimatedPrepEndTime).getTime()
       : acceptedAtMs + prepMins * 60000;
 
@@ -57,7 +94,9 @@ function PrepTimerBadge({ order }) {
     }, 1000);
 
     return () => clearInterval(intervalId);
-  }, [order.acceptedAt, order.estimatedPrepEndTime, order.preparationTime]);
+  }, [order?.acceptedAt, order?.estimatedPrepEndTime, order?.preparationTime]);
+
+  if (!order) return null;
 
   if (secondsLeft <= 0) {
     return (
@@ -83,6 +122,7 @@ function PrepTimerBadge({ order }) {
 export default function OrdersScreen() {
   const router = useRouter();
   const { orders, loading, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const safeOrders = Array.isArray(orders) ? orders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [expandedAccordionMap, setExpandedAccordionMap] = useState({});
 
@@ -120,7 +160,9 @@ export default function OrdersScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchGlobalOrders(false);
+    try {
+      await fetchGlobalOrders(false);
+    } catch (e) {}
     setRefreshing(false);
   };
 
@@ -149,16 +191,16 @@ export default function OrdersScreen() {
   };
 
   const generateInvoiceHtml = (order) => {
-    const restName = order.restaurantName || restaurantInfo.name || 'Amigoo Noshery';
-    const restAddress = restaurantInfo.address || 'Nandyal Road, Kurnool';
-    const fssaiNum = restaurantInfo.fssai || '12345678901234';
-    const orderIdVal = order.orderId || order._id || 'ORD-00000';
+    const restName = order.restaurantName || restaurantInfo?.name || 'Amigoo Noshery';
+    const restAddress = restaurantInfo?.address || 'Nandyal Road, Kurnool';
+    const fssaiNum = restaurantInfo?.fssai || '12345678901234';
+    const orderIdVal = getDisplayOrderId(order);
 
     const dateStr = order.acceptedAt
       ? new Date(order.acceptedAt).toLocaleString()
       : new Date().toLocaleString();
 
-    const commRate = order.commissionRate ?? order.commission ?? restaurantInfo.commission ?? 12;
+    const commRate = order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12;
     const itemsRaw = order.items && order.items.length > 0 ? order.items : [];
 
     const itemsList = itemsRaw.map((it) => {
@@ -305,22 +347,22 @@ export default function OrdersScreen() {
           </View>
         </View>
 
-        {loading && (
+        {loading && safeOrders.length === 0 && (
           <CustomLoader
-            visible={loading}
+            visible={true}
             title="Loading Orders..."
             subtitle="Fetching active preparing orders"
           />
         )}
 
-        {!loading && orders.length === 0 && (
+        {!loading && safeOrders.length === 0 && (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconCircle}>
               <Ionicons name="calendar-clear-outline" size={48} color="#9B8F6E" />
             </View>
             <Text style={styles.emptyTitle}>No Active Orders</Text>
             <Text style={styles.emptySubtitle}>
-              Accepted orders being prepared will appear here with live prep countdown timers.
+              Accepted orders being prepared will appear here.
             </Text>
             <TouchableOpacity
               style={styles.refreshButton}
@@ -332,8 +374,9 @@ export default function OrdersScreen() {
           </View>
         )}
 
-        {orders.map((order) => {
-          const orderIdVal = order.orderId || order._id || 'ORD-00000';
+        {safeOrders.map((order, orderIdx) => {
+          if (!order) return null;
+          const orderIdVal = getDisplayOrderId(order);
           const formattedDate = order.acceptedAt
             ? new Date(order.acceptedAt).toLocaleString('en-US', {
                 month: 'numeric',
@@ -346,7 +389,7 @@ export default function OrdersScreen() {
             : new Date().toLocaleString();
 
           const commRate = Number(
-            order.commissionRate ?? order.commission ?? restaurantInfo.commission ?? 12
+            order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12
           );
 
           const itemsRaw = order.items && order.items.length > 0 ? order.items : [];
@@ -392,11 +435,11 @@ export default function OrdersScreen() {
 
               {/* Items Table Header */}
               <View style={styles.tableHeaderRow}>
-                <Text style={[styles.colHeader, { flex: 2 }]}>ITEMS</Text>
-                <Text style={[styles.colHeader, { flex: 1, textAlign: 'center' }]}>
+                <Text style={[styles.colHeader, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>ITEMS</Text>
+                <Text style={[styles.colHeader, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>
                   QTY
                 </Text>
-                <Text style={[styles.colHeader, { flex: 1.2, textAlign: 'right' }]}>
+                <Text style={[styles.colHeader, { flex: 1.2, textAlign: 'right', paddingLeft: 6 }]}>
                   PRICE
                 </Text>
               </View>
@@ -404,10 +447,10 @@ export default function OrdersScreen() {
               {/* Items Rows */}
               {itemsList.map((item, idx) => (
                 <View key={idx} style={styles.tableItemRow}>
-                  <Text style={styles.itemNameText}>{item.name}</Text>
-                  <Text style={styles.itemQtyText}>{item.qty}</Text>
+                  <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
+                  <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>{item.qty}</Text>
 
-                  <View style={styles.priceColumnContainer}>
+                  <View style={[styles.priceColumnContainer, { flex: 1.2, paddingLeft: 6 }]}>
                     {/* Strikethrough Raw Price & Red Commission Badge */}
                     <View style={styles.strikethroughRow}>
                       <Text style={styles.strikethroughPriceText}>
@@ -569,6 +612,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 120,
@@ -581,7 +625,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    marginTop: 8,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     marginBottom: 20,
   },
   backButtonCircle: {
@@ -614,10 +658,12 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   emptyContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
+    paddingVertical: 20,
     paddingHorizontal: 20,
+    minHeight: 350,
   },
   emptyIconCircle: {
     width: 80,
@@ -681,8 +727,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   headerDivider: {
-    height: 1,
-    backgroundColor: '#D8CEB2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 12,
   },
   tableHeaderRow: {
@@ -690,6 +736,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     marginBottom: 6,
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#555555',
   },
   colHeader: {
     fontSize: 13,
@@ -741,8 +789,8 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   orderDivider: {
-    height: 1,
-    backgroundColor: '#D8CEB2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 14,
   },
   totalsRow: {

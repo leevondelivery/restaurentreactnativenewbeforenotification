@@ -1,65 +1,27 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  fetchAcceptedOrders,
+  fetchIncomingOrdersContext,
+  rejectOrder as apiRejectOrder,
+  acceptOrder as apiAcceptOrder,
+  insertPendingPayment,
+} from '@/services/api';
+import { stopOrderNotificationSound, displayOrderNotification, extractRestId, markOrderAsNotified, isOrderNotified } from '@/services/NotificationService';
 
 const OrdersContext = createContext();
 
-export const MOCK_INCOMING_ORDER = {
-  _id: '6a391eaecc05a4f188f982db',
-  orderId: 'ORD-00737',
-  userId: '6a3579405049fb87f94f96f2',
-  userName: 'Customer Name',
-  userPhone: '9876543210',
-  deliveryAddress: 'House #42, Main Street, Green Valley',
-  razorpayOrderId: 'order_T4fAtetGb5u6c9',
-  items: [
-    {
-      itemId: '208',
-      name: 'Milk Chocolate Waffle',
-      price: 119,
-      quantity: 1,
-    },
-    {
-      itemId: '209',
-      name: 'Paneer Butter Masala',
-      price: 180,
-      quantity: 1,
-    },
-  ],
-  totalPrice: 299,
-  grandTotal: 335,
-  paymentStatus: 'Paid',
-  restaurantId: 'demo_rest_101',
-  restaurantName: 'Amigoo Noshery',
-  orderDate: new Date().toISOString(),
-  createdAt: new Date().toISOString(),
-};
-
-export const getBaseApiUrl = () => {
-  let baseUrl = 'http://localhost:5000';
-  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-    baseUrl = `http://${window.location.hostname}:5000`;
-  } else {
-    const hostUri =
-      Constants.expoConfig?.hostUri ||
-      Constants.manifest2?.extra?.expoGo?.developer?.tool;
-    if (hostUri) {
-      const ip = hostUri.split(':')[0];
-      if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-        baseUrl = `http://${ip}:5000`;
-      }
-    }
-  }
-  return baseUrl;
-};
+export const getBaseApiUrl = () => BASE_URL;
 
 export const OrdersProvider = ({ children }) => {
   const [orders, setOrders] = useState([]); // Accepted / Active preparing orders
-  const [incomingOrders, setIncomingOrders] = useState([MOCK_INCOMING_ORDER]); // Pending incoming orders
-  const [incomingCount, setIncomingCount] = useState(1);
+  const [incomingOrders, setIncomingOrders] = useState([]); // Pending incoming orders
+  const [incomingCount, setIncomingCount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const seenIncomingIdsRef = useRef(new Set());
+  const isInitialFetchRef = useRef(true);
   const [restaurantInfo, setRestaurantInfo] = useState({
-    restId: 'demo_rest_101',
+    restId: '',
     commission: 12,
     address: 'Nandyal Road, Kurnool',
     fssai: '12345678901234',
@@ -96,7 +58,7 @@ export const OrdersProvider = ({ children }) => {
         parsedUser?.restaurantId ||
         parsedUser?.restaurant_id ||
         parsedUser?._id ||
-        'demo_rest_101';
+        '';
 
       const commission =
         storedCommission !== null
@@ -138,7 +100,7 @@ export const OrdersProvider = ({ children }) => {
     try {
       const storedUserStr = await AsyncStorage.getItem('userData');
       const storedRestId = await AsyncStorage.getItem('restId');
-      let restId = storedRestId || 'demo_rest_101';
+      let restId = storedRestId || '';
       if (storedUserStr) {
         try {
           const u = JSON.parse(storedUserStr);
@@ -148,28 +110,23 @@ export const OrdersProvider = ({ children }) => {
             u?.restaurantId ||
             u?.restaurant_id ||
             u?._id ||
-            'demo_rest_101';
+            '';
         } catch (e) { }
       }
 
-      const baseUrl = getBaseApiUrl();
-
-      // 1. Fetch Accepted Orders
-      const acceptedUrlPrimary = `${baseUrl}/api/orders/acceptedbyrestorents?restaurantId=${encodeURIComponent(restId)}`;
-      const acceptedUrlFallback = `${baseUrl}/accepted-orders/${encodeURIComponent(restId)}`;
+      if (!restId) {
+        if (!isPolling) {
+          setLoading(false);
+        }
+        return;
+      }
 
       let acceptedOrdersData = [];
       try {
         const controller = new AbortController();
         const tid = setTimeout(() => controller.abort(), 4000);
-        let res = await fetch(acceptedUrlPrimary, { signal: controller.signal });
+        const res = await fetchAcceptedOrders(restId, controller.signal);
         clearTimeout(tid);
-        if (!res.ok) {
-          const controller2 = new AbortController();
-          const tid2 = setTimeout(() => controller2.abort(), 4000);
-          res = await fetch(acceptedUrlFallback, { signal: controller2.signal });
-          clearTimeout(tid2);
-        }
         if (res.ok) {
           const json = await res.json();
           acceptedOrdersData = json.orders || json.data || (Array.isArray(json) ? json : []);
@@ -178,40 +135,38 @@ export const OrdersProvider = ({ children }) => {
         // Network timeout / offline fallback
       }
 
-      if (acceptedOrdersData && acceptedOrdersData.length > 0) {
-        const filteredAccepted = restId
-          ? acceptedOrdersData.filter((o) => {
-            const oRestId = String(
-              o.restaurantId || o.restId || o.restaurant_id || o.storeId || o.vendorId || o.restaurant || ''
-            ).trim();
-            return !oRestId || oRestId === String(restId).trim();
-          })
-          : acceptedOrdersData;
+      const filteredAccepted = acceptedOrdersData.filter((o) => {
+        if (!restId) return false;
+        const oRestId = String(
+          o.restaurantId ||
+          o.restId ||
+          o.restaurant_id ||
+          o.storeId ||
+          o.vendorId ||
+          (o.restaurant && (typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant)) ||
+          (o.restaurantDetails && (typeof o.restaurantDetails === 'object' ? (o.restaurantDetails.restId || o.restaurantDetails.id || o.restaurantDetails._id) : '')) ||
+          ''
+        ).trim();
 
-        setOrders(filteredAccepted);
-        // Mark all fetched accepted order IDs as processed
-        filteredAccepted.forEach((o) => {
-          if (o._id) processedOrderIdsRef.current.add(String(o._id));
-          if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
-        });
-      }
+        if (oRestId) {
+          return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
+        }
+        return false;
+      });
+
+      setOrders(filteredAccepted);
+      filteredAccepted.forEach((o) => {
+        if (o._id) processedOrderIdsRef.current.add(String(o._id));
+        if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
+      });
 
       // 2. Fetch Incoming Orders
-      const incomingUrlPrimary = `${baseUrl}/api/orders/incomingorders?restaurantId=${encodeURIComponent(restId)}`;
-      const incomingUrlFallback = `${baseUrl}/incoming-orders/${encodeURIComponent(restId)}`;
-
       let incomingData = null;
       try {
         const controller = new AbortController();
         const tid = setTimeout(() => controller.abort(), 4000);
-        let res = await fetch(incomingUrlPrimary, { signal: controller.signal });
+        const res = await fetchIncomingOrdersContext(restId, controller.signal);
         clearTimeout(tid);
-        if (!res.ok) {
-          const controller2 = new AbortController();
-          const tid2 = setTimeout(() => controller2.abort(), 4000);
-          res = await fetch(incomingUrlFallback, { signal: controller2.signal });
-          clearTimeout(tid2);
-        }
         if (res.ok) {
           const json = await res.json();
           incomingData = json.orders || json.incomingOrders || (Array.isArray(json) ? json : null);
@@ -224,39 +179,50 @@ export const OrdersProvider = ({ children }) => {
         // Filter by restaurantId match and filter out any orders processed locally
         const filteredIncoming = incomingData.filter((o) => {
           if (restId) {
-            const oRestId = String(
-              o.restaurantId || o.restId || o.restaurant_id || o.storeId || o.vendorId || o.restaurant || ''
-            ).trim();
-            if (oRestId && oRestId !== String(restId).trim()) return false;
+            const oRestId =
+              extractRestId(o.restaurantId) ||
+              extractRestId(o.restId) ||
+              extractRestId(o.restaurant_id) ||
+              extractRestId(o.storeId) ||
+              extractRestId(o.vendorId) ||
+              extractRestId(o.restaurant);
+            if (oRestId && oRestId !== String(restId).trim().toLowerCase()) return false;
           }
           const id1 = String(o._id || '');
           const id2 = String(o.orderId || '');
           return !processedOrderIdsRef.current.has(id1) && !processedOrderIdsRef.current.has(id2);
         });
+
+        // Detect newly arrived orders to trigger in-app custom sound & heads-up banner
+        filteredIncoming.forEach((ord) => {
+          const key = String(ord._id || ord.orderId || '');
+          if (key) {
+            const alreadyNotified = seenIncomingIdsRef.current.has(key) || isOrderNotified(key);
+            seenIncomingIdsRef.current.add(key);
+            markOrderAsNotified(key);
+
+            if (!alreadyNotified && !isInitialFetchRef.current) {
+              displayOrderNotification(ord);
+            }
+          }
+        });
+
+        if (isInitialFetchRef.current) {
+          isInitialFetchRef.current = false;
+        }
+
         setIncomingOrders(filteredIncoming);
         setIncomingCount(filteredIncoming.length);
       } else {
-        // Check if demo mock order should be shown (only if NOT already accepted or rejected)
-        const mockId1 = String(MOCK_INCOMING_ORDER._id);
-        const mockId2 = String(MOCK_INCOMING_ORDER.orderId);
-        const isMockProcessed =
-          processedOrderIdsRef.current.has(mockId1) ||
-          processedOrderIdsRef.current.has(mockId2);
-
-        if (!isMockProcessed && (restId === 'demo_rest_101' || !storedRestId)) {
-          setIncomingOrders([MOCK_INCOMING_ORDER]);
-          setIncomingCount(1);
-        } else {
-          setIncomingOrders((prev) => {
-            const filtered = prev.filter((o) => {
-              const id1 = String(o._id || '');
-              const id2 = String(o.orderId || '');
-              return !processedOrderIdsRef.current.has(id1) && !processedOrderIdsRef.current.has(id2);
-            });
-            setIncomingCount(filtered.length);
-            return filtered;
+        setIncomingOrders((prev) => {
+          const filtered = prev.filter((o) => {
+            const id1 = String(o._id || '');
+            const id2 = String(o.orderId || '');
+            return !processedOrderIdsRef.current.has(id1) && !processedOrderIdsRef.current.has(id2);
           });
-        }
+          setIncomingCount(filtered.length);
+          return filtered;
+        });
       }
     } catch (err) {
       console.error('OrdersContext: fetchGlobalOrders error:', err);
@@ -274,29 +240,14 @@ export const OrdersProvider = ({ children }) => {
         const idStr = String(orderId);
         processedOrderIdsRef.current.add(idStr);
 
-        const baseUrl = getBaseApiUrl();
-        const primaryUrl = `${baseUrl}/api/orders/reject-order`;
-        const fallbackUrl = `${baseUrl}/reject-order`;
-
         try {
-          const res = await fetch(primaryUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId }),
-          });
-
-          if (!res.ok) {
-            await fetch(fallbackUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ orderId }),
-            });
-          }
+          await apiRejectOrder(orderId, undefined, undefined);
         } catch (err) {
           console.warn('OrdersContext: rejectOrder API call warning:', err);
         }
 
-        // Locally update state
+        // Locally update state & stop ringing sound
+        stopOrderNotificationSound(orderId);
         setIncomingOrders((prev) => prev.filter((o) => String(o.orderId || o._id) !== idStr));
         setIncomingCount((prev) => Math.max(0, prev - 1));
 
@@ -336,24 +287,9 @@ export const OrdersProvider = ({ children }) => {
           estimatedPrepEndTime: estimatedPrepEndTimeStr,
         };
 
-        const baseUrl = getBaseApiUrl();
-        const primaryUrl = `${baseUrl}/api/orders/accept-order`;
-        const fallbackUrl = `${baseUrl}/accept-order`;
-
         // 1. Fire accept-order — errors here do NOT block pendingpayments
         try {
-          const res = await fetch(primaryUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          if (!res.ok) {
-            await fetch(fallbackUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-          }
+          await apiAcceptOrder(payload);
         } catch (err) {
           console.warn('OrdersContext: acceptOrder API call warning:', err);
         }
@@ -410,11 +346,7 @@ export const OrdersProvider = ({ children }) => {
         console.log('pendingpayments payload being sent:', JSON.stringify(pendingPayload));
 
         try {
-          const ppRes = await fetch(`${baseUrl}/api/pendingpayments`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(pendingPayload),
-          });
+          const ppRes = await insertPendingPayment(pendingPayload);
           const ppData = await ppRes.json();
           console.log('pendingpayments response:', ppData);
         } catch (ppErr) {
@@ -431,7 +363,10 @@ export const OrdersProvider = ({ children }) => {
         };
 
         setOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
-        setIncomingOrders((prev) => prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr));
+        // Locally remove from incoming list & stop ringing sound
+        stopOrderNotificationSound(orderIdVal);
+        stopOrderNotificationSound(altIdStr);
+        setIncomingOrders((prev) => prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o.orderId || '') !== altIdStr));
         setIncomingCount((prev) => Math.max(0, prev - 1));
 
         return { success: true };

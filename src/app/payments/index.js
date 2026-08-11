@@ -7,11 +7,13 @@ import {
   ScrollView,
   StatusBar,
   TouchableOpacity,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
+import { fetchPayments as apiFetchPayments } from '@/services/api';
 
 import CustomLoader from '@/components/CustomLoader';
 
@@ -21,30 +23,34 @@ export default function PaymentsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [grossTotal, setGrossTotal] = useState(0);
+
+  const isNavigatingRef = React.useRef(false);
+
+  const handleBack = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/settings');
+    }
+  };
+
+  useEffect(() => {
+    const onBackPress = () => {
+      handleBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, []);
   const [grandTotal, setGrandTotal] = useState(0);
   const [transactions, setTransactions] = useState([]);
+  const safeTx = Array.isArray(transactions) ? transactions : [];
 
   useEffect(() => {
     fetchPaymentsData();
   }, []);
-
-  const getApiUrl = (restaurantId) => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/payments?restaurantId=${encodeURIComponent(restaurantId || '')}`;
-  };
 
   const fetchPaymentsData = async () => {
     try {
@@ -61,15 +67,10 @@ export default function PaymentsScreen() {
           '';
       }
 
-      const API_URL = getApiUrl(targetRestId);
-      console.log('Fetching payments data from:', API_URL);
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const response = await fetch(API_URL, {
-        signal: controller.signal,
-      });
+      const response = await apiFetchPayments(targetRestId, controller.signal);
 
       clearTimeout(timeoutId);
       const data = await response.json();
@@ -78,14 +79,18 @@ export default function PaymentsScreen() {
         setGrossTotal(data.grossTotal ?? 0);
         setGrandTotal(data.grandTotal ?? 0);
         const rawTxList = Array.isArray(data.transactions) ? data.transactions : [];
-        const matchingTx = rawTxList.filter((tx) => {
-          if (!targetRestId) return false;
-          const txRestId = String(
-            tx.restaurantId || tx.restId || tx.restaurant_id || tx.storeId || tx.vendorId || ''
-          ).trim();
-          return txRestId === String(targetRestId).trim();
+        
+        let txList = [];
+        rawTxList.forEach((item) => {
+          if (!item) return;
+          if (Array.isArray(item.transactions) && item.transactions.length > 0) {
+            txList.push(...item.transactions);
+          } else if (item.orderId || item.amount !== undefined || item.transactionId) {
+            // Ensure we don't include raw parent document objects that lack orderId/amount
+            txList.push(item);
+          }
         });
-        setTransactions(matchingTx);
+        setTransactions(txList);
       } else {
         setGrossTotal(0);
         setGrandTotal(0);
@@ -98,18 +103,6 @@ export default function PaymentsScreen() {
       setTransactions([]);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const isNavigatingRef = React.useRef(false);
-
-  const handleBack = () => {
-    if (isNavigatingRef.current) return;
-    isNavigatingRef.current = true;
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/settings');
     }
   };
 
@@ -217,12 +210,12 @@ export default function PaymentsScreen() {
             <View style={styles.transactionsHeaderRow}>
               <Text style={styles.transactionsSectionTitle}>Transactions</Text>
               <Text style={styles.transactionsItemCount}>
-                {transactions.length} {transactions.length === 1 ? 'item' : 'items'}
+                {safeTx.length} {safeTx.length === 1 ? 'item' : 'items'}
               </Text>
             </View>
 
             {/* Transactions List or Empty State */}
-            {transactions.length === 0 ? (
+            {safeTx.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Ionicons name="card-outline" size={64} color="#736B5E" />
                 <Text style={styles.emptyTitle}>No Transactions Yet</Text>
@@ -238,7 +231,8 @@ export default function PaymentsScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              transactions.map((tx, idx) => {
+              safeTx.map((tx, idx) => {
+                if (!tx) return null;
                 const txId = tx.transactionId || tx.id || `TXN-${98401 - idx}`;
                 const amountVal = tx.amount ?? 0;
                 const { date: txDate, time: txTime } = formatTxDateTime(tx);
@@ -283,6 +277,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 120,
@@ -292,7 +287,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
-    marginTop: 4,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     position: 'relative',
     height: 48,
   },

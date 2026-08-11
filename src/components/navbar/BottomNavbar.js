@@ -1,3 +1,4 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { setUser } from '@/store/userSlice';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -5,10 +6,10 @@ import { usePathname, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
-  Easing,
   StyleSheet,
   TouchableOpacity,
   View,
+  Platform,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -18,8 +19,16 @@ export default function BottomNavbar() {
   const router = useRouter();
   const pathname = usePathname();
   const dispatch = useDispatch();
+  const insets = useSafeAreaInsets();
   const reduxUserData = useSelector((state) => state.user.userData);
   const [pillWidth, setPillWidth] = useState(340);
+
+  const getDynamicBottom = () => {
+    if (Platform.OS === 'android') {
+      return insets.bottom > 0 ? insets.bottom + 14 : 28;
+    }
+    return Math.max(16, insets.bottom + 8);
+  };
 
   const tabs = [
     {
@@ -57,6 +66,7 @@ export default function BottomNavbar() {
 
   // Calculate target X position for active circle
   const getTargetX = (index, width) => {
+    if (index < 0) return 0;
     const padding = 12;
     const availableWidth = width - padding * 2;
     const tabWidth = availableWidth / tabs.length;
@@ -65,41 +75,42 @@ export default function BottomNavbar() {
   };
 
   const translateX = useRef(
-    new Animated.Value(getTargetX(activeIndex, 340))
+    new Animated.Value(getTargetX(activeIndex >= 0 ? activeIndex : 0, 340))
   ).current;
 
-  // Animate smoothly to active index on route change or pill width change
+  // Ultra-smooth native 60fps spring animation on route change or resize
   useEffect(() => {
-    const targetX = getTargetX(activeIndex, pillWidth);
-    Animated.timing(translateX, {
-      toValue: targetX,
-      duration: 200,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
+    if (activeIndex >= 0) {
+      const targetX = getTargetX(activeIndex, pillWidth);
+      Animated.spring(translateX, {
+        toValue: targetX,
+        damping: 20,
+        stiffness: 250,
+        mass: 0.7,
+        useNativeDriver: true,
+      }).start();
+    }
   }, [activeIndex, pillWidth]);
 
   const isNavigatingRef = useRef(false);
 
-  const handlePress = async (path) => {
+  const handlePress = (path) => {
     if (pathname === path) return;
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
     setTimeout(() => {
       isNavigatingRef.current = false;
-    }, 400);
+    }, 250);
 
-    // Pre-load userData into Redux before navigating
-    // so every page opens with data already available — no flash
+    // Pre-load user data into Redux asynchronously without blocking navigation
     if (!reduxUserData) {
-      try {
-        const storedUser = await AsyncStorage.getItem('userData');
-        if (storedUser) {
-          dispatch(setUser(JSON.parse(storedUser)));
-        }
-      } catch (e) {
-        console.warn('Navbar: failed to preload userData into Redux', e);
-      }
+      AsyncStorage.getItem('userData')
+        .then((storedUser) => {
+          if (storedUser) {
+            dispatch(setUser(JSON.parse(storedUser)));
+          }
+        })
+        .catch(() => {});
     }
 
     router.replace(path);
@@ -109,14 +120,22 @@ export default function BottomNavbar() {
     const { width } = event.nativeEvent.layout;
     if (width && width !== pillWidth) {
       setPillWidth(width);
-      translateX.setValue(getTargetX(activeIndex, width));
+      if (activeIndex >= 0) {
+        translateX.setValue(getTargetX(activeIndex, width));
+      }
     }
   };
 
   return (
-    <View style={styles.navbarContainer} pointerEvents="box-none">
+    <View
+      style={[
+        styles.navbarContainer,
+        { bottom: getDynamicBottom() },
+      ]}
+      pointerEvents="box-none"
+    >
       <View style={styles.navbarPill} onLayout={onPillLayout}>
-        {/* Zero-Flicker Bumped Active Circle Overlay — hidden when no tab matches */}
+        {/* Active Circle Overlay with Smooth Native Spring Gliding */}
         {activeIndex >= 0 && (
           <Animated.View
             style={[
@@ -135,13 +154,13 @@ export default function BottomNavbar() {
         )}
 
         {/* Tab Touch Targets */}
-        {tabs.map((tab) => {
+        {tabs.map((tab, index) => {
           return (
             <TouchableOpacity
               key={tab.id}
               style={styles.navItem}
               onPress={() => handlePress(tab.path)}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
             >
               <View style={styles.navCircleInactive}>
                 <Ionicons name={tab.iconName} size={20} color="#000000" />

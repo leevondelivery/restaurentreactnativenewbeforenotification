@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Print from 'expo-print';
+import { getDisplayOrderId } from '../orders';
 
 import './invoice.css';
 
@@ -59,8 +60,7 @@ export default function OrderInvoiceScreen() {
     userData?.address || userData?.restLocation || 'Nandyal Road';
   const fssaiNumber = userData?.fssai || '1234567';
 
-  const orderIdVal =
-    order?.orderId || order?.orderid || params?.orderId || 'ORD-00294';
+  const orderIdVal = getDisplayOrderId(order || params);
   const dateStr =
     order?.createdAtFormatted ||
     (order?.createdAt

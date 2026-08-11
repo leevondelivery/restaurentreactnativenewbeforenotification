@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import { fetchMenu, updateMenuItemStatus as apiUpdateMenuItemStatus } from '@/services/api';
 
 import CustomLoader from '@/components/CustomLoader';
 import './mymenu.css';
@@ -31,23 +32,6 @@ export default function MyMenuScreen() {
     loadUserData();
   }, []);
 
-  const getApiUrl = (endpoint) => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}${endpoint}`;
-  };
 
   const loadUserData = async () => {
     try {
@@ -82,10 +66,7 @@ export default function MyMenuScreen() {
       }
       if (targetName) queryParams.append('name', targetName);
 
-      const API_URL = getApiUrl(`/api/menu?${queryParams.toString()}`);
-      console.log('Fetching menu items from:', API_URL);
-
-      const response = await fetch(API_URL);
+      const response = await fetchMenu(targetRestId, targetName);
       const data = await response.json();
       console.log('Menu fetch response:', data);
 
@@ -112,22 +93,7 @@ export default function MyMenuScreen() {
 
     // 2. Update MongoDB restuarents collection via API
     try {
-      const API_URL = getApiUrl('/api/menu/item-status');
-      const targetCollection = item.collectionName || collectionName;
-
-      console.log(`Toggling itemStatus for "${item.name}" (id: ${item._id}) in collection "${targetCollection}" to: ${newStatus}`);
-
-      const response = await fetch(API_URL, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          collectionName: targetCollection,
-          itemId: item._id,
-          itemStatus: newStatus,
-        }),
-      });
+      const response = await apiUpdateMenuItemStatus(item.collectionName || collectionName, item._id, newStatus);
 
       const data = await response.json();
       console.log('Update itemStatus response:', data);
@@ -144,8 +110,9 @@ export default function MyMenuScreen() {
     }
   };
 
-  const filteredItems = menuItems.filter((item) =>
-    item.name?.toLowerCase().includes(searchQuery.toLowerCase())
+  const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
+  const filteredItems = safeMenuItems.filter((item) =>
+    item?.name?.toLowerCase().includes((searchQuery || '').toLowerCase())
   );
 
   return (
@@ -202,31 +169,34 @@ export default function MyMenuScreen() {
         ) : (
           /* Main Outer Beige Card Container */
           <View style={styles.outerMenuCard}>
-            {filteredItems.map((item, index) => (
-              <View key={item._id || index} style={styles.menuItemCard}>
-                <View style={styles.itemInfoCol}>
-                  <Text style={styles.menuItemName}>{item.name}</Text>
-                  <Text style={styles.menuItemPrice}>₹ {item.price}</Text>
-                </View>
+            {filteredItems.map((item, index) => {
+              if (!item) return null;
+              return (
+                <View key={item._id || index} style={styles.menuItemCard}>
+                  <View style={styles.itemInfoCol}>
+                    <Text style={styles.menuItemName}>{item.name}</Text>
+                    <Text style={styles.menuItemPrice}>₹ {item.price}</Text>
+                  </View>
 
-                {/* Custom Styled Switch Toggle for itemStatus */}
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => handleToggleItemStatus(item, index)}
-                  style={[
-                    styles.toggleSwitchPill,
-                    item.itemStatus ? styles.toggleActivePill : styles.toggleInactivePill,
-                  ]}
-                >
-                  <View
+                  {/* Custom Styled Switch Toggle for itemStatus */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => handleToggleItemStatus(item, index)}
                     style={[
-                      styles.toggleCircle,
-                      item.itemStatus ? styles.toggleCircleRight : styles.toggleCircleLeft,
+                      styles.toggleSwitchPill,
+                      item.itemStatus ? styles.toggleActivePill : styles.toggleInactivePill,
                     ]}
-                  />
-                </TouchableOpacity>
-              </View>
-            ))}
+                  >
+                    <View
+                      style={[
+                        styles.toggleCircle,
+                        item.itemStatus ? styles.toggleCircleRight : styles.toggleCircleLeft,
+                      ]}
+                    />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
           </View>
         )}
       </ScrollView>

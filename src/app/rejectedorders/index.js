@@ -7,43 +7,51 @@ import {
   ScrollView,
   StatusBar,
   TouchableOpacity,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
+import { fetchRejectedOrders as apiFetchRejectedOrders } from '@/services/api';
 
 import CustomLoader from '@/components/CustomLoader';
+import { getDisplayOrderId } from '../orders';
 
 import './rejectedorders.css';
 
 export default function RejectedOrdersScreen() {
   const router = useRouter();
   const [orders, setOrders] = useState([]);
+  const safeOrders = Array.isArray(orders) ? orders : [];
   const [loading, setLoading] = useState(true);
   const [restId, setRestId] = useState('');
+
+  const isNavigatingRef = React.useRef(false);
+
+  const handleBack = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/settings');
+    }
+  };
+
+  useEffect(() => {
+    const onBackPress = () => {
+      handleBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     fetchRejectedOrders();
   }, []);
 
-  const getApiUrl = (restaurantId) => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/orders/rejected?restaurantId=${encodeURIComponent(restaurantId || '')}`;
-  };
 
   const fetchRejectedOrders = async () => {
     try {
@@ -69,18 +77,14 @@ export default function RejectedOrdersScreen() {
       }
       setRestId(targetRestId);
 
-      const API_URL = getApiUrl(targetRestId);
-      console.log('Fetching rejected orders from:', API_URL);
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const response = await fetch(API_URL, {
-        signal: controller.signal,
-      });
+      const response = await apiFetchRejectedOrders(targetRestId, controller.signal);
 
       clearTimeout(timeoutId);
       const data = await response.json();
+
 
       if (response.ok && data.success && Array.isArray(data.orders)) {
         const matchingOrders = data.orders.filter((ord) => {
@@ -99,18 +103,6 @@ export default function RejectedOrdersScreen() {
       setOrders([]);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const isNavigatingRef = React.useRef(false);
-
-  const handleBack = () => {
-    if (isNavigatingRef.current) return;
-    isNavigatingRef.current = true;
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/settings');
     }
   };
 
@@ -145,7 +137,7 @@ export default function RejectedOrdersScreen() {
           />
         )}
 
-        {!loading && orders.length === 0 && (
+        {!loading && safeOrders.length === 0 && (
           <View style={styles.emptyContainer}>
             <Ionicons name="ban-outline" size={64} color="#736B5E" />
             <Text style={styles.emptyTitle}>No Rejected Orders</Text>
@@ -162,7 +154,8 @@ export default function RejectedOrdersScreen() {
           </View>
         )}
 
-        {orders.map((order) => {
+        {safeOrders.map((order) => {
+          if (!order) return null;
           const commRate = Number(order.commission !== undefined ? order.commission : 12);
           const keepPct = 100 - commRate;
 
@@ -206,23 +199,23 @@ export default function RejectedOrdersScreen() {
             <View key={order._id || order.orderId} style={styles.orderOuterCard}>
               {/* Top Header Strip */}
               <View style={styles.orderTopStrip}>
-                <Text style={styles.orderIdText}>ORDER ID: {order.orderId || order._id}</Text>
+                <Text style={styles.orderIdText}>ORDER ID: {getDisplayOrderId(order)}</Text>
                 <Text style={styles.orderDateText}>{formattedDate}</Text>
               </View>
 
               {/* Table Header Row */}
               <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableHeaderCol, { flex: 2 }]}>ITEM</Text>
-                <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center' }]}>QTY</Text>
-                <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'right' }]}>NET PRICE</Text>
+                <Text style={[styles.tableHeaderCol, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>ITEM</Text>
+                <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>QTY</Text>
+                <Text style={[styles.tableHeaderCol, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>NET PRICE</Text>
               </View>
 
               {/* Table Items */}
               {itemCalculations.map((item, idx) => (
                 <View key={idx} style={styles.tableItemRow}>
-                  <Text style={styles.itemNameText}>{item.name}</Text>
-                  <Text style={styles.itemQtyText}>x{item.qty}</Text>
-                  <Text style={styles.itemPriceText}>₹{Number(item.discountedPrice).toFixed(2)}</Text>
+                  <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
+                  <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>x{item.qty}</Text>
+                  <Text style={[styles.itemPriceText, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>₹{Number(item.discountedPrice).toFixed(2)}</Text>
                 </View>
               ))}
 
@@ -235,9 +228,7 @@ export default function RejectedOrdersScreen() {
               </View>
 
               <View style={styles.totalRow}>
-                <Text style={styles.totalLabelText}>
-                  Net Earnings ({keepPct}% after {commRate}% commission)
-                </Text>
+                <Text style={styles.totalLabelText}>Net Earnings</Text>
                 <Text style={styles.totalValText}>₹{Number(netEarningsTotal).toFixed(2)}</Text>
               </View>
 
@@ -260,6 +251,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 120,
@@ -272,7 +264,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    marginTop: 8,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     marginBottom: 24,
   },
   backButtonCircle: {
@@ -305,10 +297,12 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   emptyContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
+    paddingVertical: 20,
     paddingHorizontal: 20,
+    minHeight: 350,
   },
   emptyTitle: {
     fontSize: 20,
@@ -406,8 +400,8 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   orderDivider: {
-    height: 1,
-    backgroundColor: '#EAE3D2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 10,
   },
   totalRow: {

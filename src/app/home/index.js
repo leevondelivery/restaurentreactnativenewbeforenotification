@@ -3,6 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { useSelector } from 'react-redux';
+import { useOrders } from '@/context/OrdersContext';
+import { fetchAcceptedOrders, fetchRestaurantStats, updateRestaurantStatus } from '@/services/api';
 import {
   Animated,
   Easing,
@@ -20,7 +23,9 @@ import './home.css';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [userData, setUserData] = useState(null);
+  const reduxUserData = useSelector((state) => state.user.userData);
+  const { orders: globalOrders, fetchGlobalOrders } = useOrders();
+  const [userData, setUserData] = useState(reduxUserData || null);
   const [isOpen, setIsOpen] = useState(true);
 
   // Animated value: 1 = OPEN, 0 = CLOSED
@@ -31,7 +36,72 @@ export default function HomeScreen() {
   const [todayOrders, setTodayOrders] = useState(0);
   const [totalEarnings, setTotalEarnings] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
-  const [loadingStats, setLoadingStats] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(false);
+
+  // Instantly sync user profile data from Redux if available
+  useEffect(() => {
+    if (reduxUserData) {
+      setUserData(reduxUserData);
+      const activeBool = reduxUserData.isActive !== undefined ? Boolean(reduxUserData.isActive) : true;
+      setIsOpen(activeBool);
+      animVal.setValue(activeBool ? 1 : 0);
+    }
+  }, [reduxUserData]);
+
+  // Compute stats instantly from background orders context
+  useEffect(() => {
+    const rawOrdersList = Array.isArray(globalOrders) ? globalOrders : [];
+    const targetRestId = String(
+      userData?.restId || userData?.restaurantId || userData?.restaurant_id || userData?._id || userData?.id || ''
+    ).trim();
+
+    const matchingOrders = rawOrdersList.filter((ord) => {
+      if (!targetRestId) return true;
+      const ordRestId = String(
+        ord.restaurantId || ord.restId || ord.restaurant_id || ord.storeId || ord.vendorId || ord.restaurant || ''
+      ).trim();
+      return ordRestId.toLowerCase() === targetRestId.toLowerCase();
+    });
+
+    const now = new Date();
+    const todayYear = now.getFullYear();
+    const todayMonth = now.getMonth();
+    const todayDate = now.getDate();
+
+    let tEarnings = 0;
+    let tOrders = 0;
+    let totEarnings = 0;
+    let totOrders = matchingOrders.length;
+
+    matchingOrders.forEach((ord) => {
+      const earnings = Number(
+        ord.totalPriceAfterCommission ?? ord.netEarnings ?? ord.totalPrice ?? 0
+      );
+      totEarnings += earnings;
+
+      const ordDateRaw = ord.acceptedAt || ord.orderDate || ord.createdAt;
+      if (ordDateRaw) {
+        const d = new Date(ordDateRaw);
+        if (
+          !isNaN(d.getTime()) &&
+          d.getFullYear() === todayYear &&
+          d.getMonth() === todayMonth &&
+          d.getDate() === todayDate
+        ) {
+          tOrders += 1;
+          tEarnings += earnings;
+        }
+      } else {
+        tOrders += 1;
+        tEarnings += earnings;
+      }
+    });
+
+    setTodayEarnings(tEarnings);
+    setTodayOrders(tOrders);
+    setTotalEarnings(totEarnings);
+    setTotalOrders(totOrders);
+  }, [globalOrders, userData]);
 
   // Load stats on mount and whenever screen comes into focus
   useFocusEffect(
@@ -40,34 +110,14 @@ export default function HomeScreen() {
     }, [])
   );
 
-  const getStatsApiUrl = (restaurantId) => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/orders/acceptedbyrestorents?restaurantId=${encodeURIComponent(restaurantId || '')}`;
-  };
-
   const fetchStats = async (targetRestId) => {
     try {
       setLoadingStats(true);
-      const url = getStatsApiUrl(targetRestId);
-      console.log('Fetching home stats (accepted orders) for restaurantId:', targetRestId, 'from:', url);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetchAcceptedOrders(targetRestId, controller.signal);
       clearTimeout(timeoutId);
 
       const data = await response.json();
@@ -87,12 +137,7 @@ export default function HomeScreen() {
       // If acceptedbyrestorents didn't return an array or failed, try fallback /api/restaurant/stats endpoint
       if (rawOrdersList.length === 0) {
         try {
-          let baseUrl = 'http://localhost:5000';
-          if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-            baseUrl = `http://${window.location.hostname}:5000`;
-          }
-          const statsUrl = `${baseUrl}/api/restaurant/stats?restaurantId=${encodeURIComponent(targetRestId || '')}`;
-          const resStats = await fetch(statsUrl);
+          const resStats = await fetchRestaurantStats(targetRestId);
           if (resStats.ok) {
             const statsJson = await resStats.json();
             if (Array.isArray(statsJson.orders)) {
@@ -170,6 +215,8 @@ export default function HomeScreen() {
 
   const loadUserData = async () => {
     try {
+      // Extend 30-day session countdown whenever app is used
+      await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
       const storedUser = await AsyncStorage.getItem('userData');
       const storedRestId = await AsyncStorage.getItem('restId');
       let targetRestId = '';
@@ -201,24 +248,6 @@ export default function HomeScreen() {
     }
   };
 
-  const getApiUrl = () => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/restaurant/status`;
-  };
-
   const handleToggle = async () => {
     const nextState = !isOpen;
 
@@ -245,7 +274,6 @@ export default function HomeScreen() {
 
     // 3. Update MongoDB restuarentusers collection via API
     try {
-      const API_URL = getApiUrl();
       const targetRestId =
         userData?.restId ||
         userData?.restaurantId ||
@@ -254,19 +282,11 @@ export default function HomeScreen() {
         '';
       const targetPhone = userData?.phone || userData?.mobileNumber || '';
 
-      console.log(`Sending toggle status request (isActive=${nextState}) to:`, API_URL);
-
-      const response = await fetch(API_URL, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId: userData?._id,
-          restId: targetRestId,
-          phone: targetPhone,
-          isActive: nextState,
-        }),
+      const response = await updateRestaurantStatus({
+        userId: userData?._id,
+        restId: targetRestId,
+        phone: targetPhone,
+        isActive: nextState,
       });
 
       const data = await response.json();
@@ -408,6 +428,7 @@ const styles = StyleSheet.create({
     paddingRight: 28,
     width: '100%',
     maxWidth: 400,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 4 : 8,
     marginBottom: 28,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 3 },

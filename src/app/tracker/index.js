@@ -8,24 +8,33 @@ import {
   StatusBar,
   TouchableOpacity,
   RefreshControl,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import Constants from 'expo-constants';
+import { useOrders } from '@/context/OrdersContext';
 
 import CustomLoader from '@/components/CustomLoader';
+import { getDisplayOrderId } from '../orders';
 import './tracker.css';
 
 export default function TrackerScreen() {
   const router = useRouter();
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const { orders: globalOrders, loading: globalLoading, fetchGlobalOrders } = useOrders();
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(Date.now());
   const isNavigatingRef = useRef(false);
-  // Track if we have ever successfully loaded orders — skip spinner on subsequent tab taps
-  const hasLoadedRef = useRef(false);
+
+  // Device level Back Button / Gesture Navigation Compatibility
+  useEffect(() => {
+    const onBackPress = () => {
+      router.replace('/home');
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [router]);
 
   // 1-second clock for countdown timers
   useEffect(() => {
@@ -35,107 +44,28 @@ export default function TrackerScreen() {
     return () => clearInterval(timerInterval);
   }, []);
 
-  const getApiUrl = (restaurantId) => {
-    let baseUrl = 'http://localhost:5000';
-    if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-      baseUrl = `http://${window.location.hostname}:5000`;
-    } else {
-      const hostUri =
-        Constants.expoConfig?.hostUri ||
-        Constants.manifest2?.extra?.expoGo?.developer?.tool;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-          baseUrl = `http://${ip}:5000`;
-        }
-      }
-    }
-    return `${baseUrl}/api/orders/acceptedbyrestorents?restaurantId=${encodeURIComponent(restaurantId || '')}`;
-  };
-
-  // Stable fetch — useCallback with [] so reference never changes between renders
-  const fetchAcceptedOrders = useCallback(async (isSilent = false) => {
-    try {
-      // Only show full loading spinner on the very first fetch ever
-      if (!isSilent && !hasLoadedRef.current) {
-        setLoading(true);
-      }
-
-      const storedUserStr = await AsyncStorage.getItem('userData');
-      const storedRestId = await AsyncStorage.getItem('restId');
-      let targetRestId = '';
-
-      if (storedUserStr) {
-        try {
-          const u = JSON.parse(storedUserStr);
-          targetRestId = String(
-            u?.restId || u?.restaurantId || u?.restaurant_id || u?._id || u?.id || storedRestId || ''
-          ).trim();
-        } catch (e) {}
-      }
-      if (!targetRestId && storedRestId) {
-        targetRestId = String(storedRestId).trim();
-      }
-
-      const API_URL = getApiUrl(targetRestId);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-      const response = await fetch(API_URL, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && Array.isArray(data.orders)) {
-          const matchingOrders = data.orders.filter((ord) => {
-            if (!targetRestId) return false;
-            const ordRestId = String(
-              ord.restaurantId || ord.restId || ord.restaurant_id || ord.storeId || ord.vendorId || ord.restaurant || ''
-            ).trim();
-            return ordRestId === String(targetRestId).trim();
-          });
-          const processedOrders = matchingOrders.map((ord, idx) => ({
-            ...ord,
-            startTime: ord.createdAt
-              ? new Date(ord.createdAt).getTime()
-              : ord.orderDate
-              ? new Date(ord.orderDate).getTime()
-              : Date.now() - idx * 180000,
-          }));
-          hasLoadedRef.current = true;
-          setOrders(processedOrders);
-        }
-      }
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        console.log('Tracker fetch notice:', err.message);
-      }
-    } finally {
-      // Always clear loading — never gate on isMountedRef so loading never gets permanently stuck
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  // Stable useFocusEffect — fetchAcceptedOrders ref never changes so this only runs on focus/blur
   useFocusEffect(
     useCallback(() => {
       isNavigatingRef.current = false;
-      // Silent if already loaded before — no spinner flash when switching tabs
-      fetchAcceptedOrders(hasLoadedRef.current);
-
-      const intervalId = setInterval(() => {
-        fetchAcceptedOrders(true);
-      }, 5000);
-
-      return () => clearInterval(intervalId);
-    }, [fetchAcceptedOrders])
+      fetchGlobalOrders(true);
+    }, [fetchGlobalOrders])
   );
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    fetchAcceptedOrders(true);
+    await fetchGlobalOrders(false);
+    setRefreshing(false);
   };
+
+  const orders = globalOrders.map((ord, idx) => ({
+    ...ord,
+    startTime: ord.createdAt
+      ? new Date(ord.createdAt).getTime()
+      : ord.orderDate
+      ? new Date(ord.orderDate).getTime()
+      : Date.now() - idx * 180000,
+  }));
+  const loading = globalLoading && orders.length === 0;
 
   const handlePrintInvoice = (order) => {
     if (isNavigatingRef.current) return;
@@ -186,7 +116,7 @@ export default function TrackerScreen() {
             <Ionicons name="checkmark-circle-outline" size={64} color="#736B5E" />
             <Text style={styles.emptyTitle}>No Accepted Orders</Text>
             <Text style={styles.emptySubtitle}>
-              Orders that you accept will appear here in real-time.
+              Accepted orders being prepared will appear here.
             </Text>
             <TouchableOpacity
               style={styles.refreshButton}
@@ -199,7 +129,7 @@ export default function TrackerScreen() {
         )}
 
         {orders.map((order) => {
-          const orderIdVal = order.orderId || order._id || 'ORD-00000';
+          const orderIdVal = getDisplayOrderId(order);
           const formattedDate = order.acceptedAt
             ? new Date(order.acceptedAt).toLocaleString('en-US', {
                 month: 'numeric',
@@ -258,11 +188,11 @@ export default function TrackerScreen() {
 
               {/* Items Table Header */}
               <View style={styles.tableHeaderRow}>
-                <Text style={[styles.colHeader, { flex: 2 }]}>ITEMS</Text>
-                <Text style={[styles.colHeader, { flex: 1, textAlign: 'center' }]}>
+                <Text style={[styles.colHeader, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>ITEMS</Text>
+                <Text style={[styles.colHeader, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>
                   QTY
                 </Text>
-                <Text style={[styles.colHeader, { flex: 1.2, textAlign: 'right' }]}>
+                <Text style={[styles.colHeader, { flex: 1.2, textAlign: 'right', paddingLeft: 6 }]}>
                   PRICE
                 </Text>
               </View>
@@ -270,10 +200,10 @@ export default function TrackerScreen() {
               {/* Items Rows */}
               {itemsList.map((item, idx) => (
                 <View key={idx} style={styles.tableItemRow}>
-                  <Text style={styles.itemNameText}>{item.name}</Text>
-                  <Text style={styles.itemQtyText}>{item.qty}</Text>
+                  <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
+                  <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>{item.qty}</Text>
 
-                  <View style={styles.priceColumnContainer}>
+                  <View style={[styles.priceColumnContainer, { flex: 1.2, paddingLeft: 6 }]}>
                     {/* Strikethrough Raw Price & Red Commission Badge */}
                     <View style={styles.strikethroughRow}>
                       <Text style={styles.strikethroughPriceText}>
@@ -338,6 +268,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 120,
@@ -351,7 +282,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     paddingVertical: 12,
     paddingHorizontal: 26,
-    marginTop: 8,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     marginBottom: 20,
   },
   topHeaderText: {
@@ -360,10 +291,12 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   emptyContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
+    paddingVertical: 20,
     paddingHorizontal: 20,
+    minHeight: 350,
   },
   emptyTitle: {
     fontSize: 20,
@@ -419,8 +352,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   headerDivider: {
-    height: 1,
-    backgroundColor: '#D8CEB2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 12,
   },
   tableHeaderRow: {
@@ -428,6 +361,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     marginBottom: 6,
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#555555',
   },
   colHeader: {
     fontSize: 13,
@@ -479,8 +414,8 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   orderDivider: {
-    height: 1,
-    backgroundColor: '#D8CEB2',
+    height: 1.5,
+    backgroundColor: '#555555',
     marginVertical: 14,
   },
   totalsRow: {
