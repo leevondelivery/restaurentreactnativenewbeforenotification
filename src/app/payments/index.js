@@ -235,23 +235,61 @@ export default function PaymentsScreen() {
               safeTx.map((tx, idx) => {
                 if (!tx) return null;
                 const txId = tx.transactionId || tx.id || `TXN-${98401 - idx}`;
-                const amountVal = tx.amount ?? 0;
+                const amountVal = tx.amount ?? tx.grandTotal ?? 0;
+                const grossVal = tx.grossTotal ?? tx.grossAmount ?? null;
+                const commRate = tx.commissionRate ?? null;
+                const commCut = tx.totalCommissionCut ?? null;
+                const statusVal = tx.status || 'Pending Clearance';
+                const orderIdVal = tx.orderId || tx.orderid || null;
                 const { date: txDate, time: txTime } = formatTxDateTime(tx);
 
                 return (
                   <View key={tx._id || idx} style={styles.transactionCard}>
-                    <View style={styles.transactionMainRow}>
-                      <View style={styles.txIconCircle}>
-                        <Ionicons name="swap-horizontal" size={20} color="#FFFFFF" />
-                      </View>
+                    {/* Top Row: Transaction ID & Status Badge */}
+                    <View style={styles.transactionTopHeaderRow}>
                       <View style={styles.txInfoCol}>
                         <Text style={styles.txIdLabel}>TRANSACTION ID</Text>
                         <Text style={styles.txIdValue}>{txId}</Text>
                       </View>
-                      <Text style={styles.txAmountText}>{formatCurrency(amountVal)}</Text>
+                      <View style={styles.statusPill}>
+                        <View style={styles.statusDot} />
+                        <Text style={styles.statusPillText}>{statusVal}</Text>
+                      </View>
                     </View>
 
+                    {/* Main Amount Breakdown Row */}
+                    <View style={styles.transactionMainRow}>
+                      <View style={styles.txIconCircle}>
+                        <Ionicons name="swap-horizontal" size={20} color="#FFFFFF" />
+                      </View>
+                      <View style={styles.txAmountDetailsCol}>
+                        <Text style={styles.netAmountLabel}>NET EARNINGS</Text>
+                        <Text style={styles.txAmountText}>{formatCurrency(amountVal)}</Text>
+                      </View>
+                      {(grossVal !== null || commCut !== null) && (
+                        <View style={styles.breakdownCol}>
+                          {grossVal !== null && (
+                            <Text style={styles.breakdownText}>
+                              Gross: <Text style={styles.breakdownVal}>{formatCurrency(grossVal)}</Text>
+                            </Text>
+                          )}
+                          {commCut !== null && (
+                            <Text style={styles.breakdownText}>
+                              Comm {commRate ? `(${commRate}%)` : ''}: <Text style={styles.breakdownCutVal}>-{formatCurrency(commCut)}</Text>
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Badges Row: Order ID, Date & Time */}
                     <View style={styles.txBadgesRow}>
+                      {orderIdVal && (
+                        <View style={styles.txBadgePill}>
+                          <Ionicons name="receipt-outline" size={14} color="#E35436" />
+                          <Text style={styles.txBadgeTextOrder}>Order #{orderIdVal}</Text>
+                        </View>
+                      )}
                       <View style={styles.txBadgePill}>
                         <Ionicons name="calendar-outline" size={14} color="#555555" />
                         <Text style={styles.txBadgeText}>{txDate}</Text>
@@ -452,6 +490,35 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
+  transactionTopHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EFE6',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF8E7',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    gap: 6,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#D97706',
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#D97706',
+  },
   transactionMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -469,6 +536,16 @@ const styles = StyleSheet.create({
   txInfoCol: {
     flex: 1,
   },
+  txAmountDetailsCol: {
+    flex: 1,
+  },
+  netAmountLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#888888',
+    letterSpacing: 0.5,
+    marginBottom: 1,
+  },
   txIdLabel: {
     fontSize: 10,
     fontWeight: '600',
@@ -482,14 +559,33 @@ const styles = StyleSheet.create({
     color: '#111111',
   },
   txAmountText: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '800',
     color: '#E35436',
+  },
+  breakdownCol: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  breakdownText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  breakdownVal: {
+    color: '#111111',
+    fontWeight: '700',
+  },
+  breakdownCutVal: {
+    color: '#DC2626',
+    fontWeight: '700',
   },
   txBadgesRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    flexWrap: 'wrap',
+    gap: 8,
   },
   txBadgePill: {
     flexDirection: 'row',
@@ -504,6 +600,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#444444',
+  },
+  txBadgeTextOrder: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#E35436',
   },
   emptyContainer: {
     alignItems: 'center',
