@@ -32,13 +32,11 @@ if (Platform.OS !== 'web') {
     return Promise.resolve();
   });
 
-  // Notifee Background Event Listener (stops sound on notification click or dismissal)
+  // Notifee Background Event Listener
   notifee.onBackgroundEvent(async ({ type, detail }) => {
     if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
       const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
       if (orderId) markOrderAsNotified(orderId);
-      await stopOrderNotificationSound(orderId);
-      await stopOrderNotificationSound();
     }
   });
 }

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import {
   fetchAcceptedOrders,
   fetchIncomingOrdersContext,
@@ -8,6 +9,7 @@ import {
   insertPendingPayment,
 } from '@/services/api';
 import { stopOrderNotificationSound, displayOrderNotification, extractRestId, markOrderAsNotified, isOrderNotified } from '@/services/NotificationService';
+import { playOrderSound } from '@/services/soundService';
 
 const OrdersContext = createContext();
 
@@ -400,6 +402,29 @@ export const OrdersProvider = ({ children }) => {
       }
     };
   }, [loadRestaurantInfo, fetchGlobalOrders]);
+
+  // Manage in-app native looping notification sound based on incomingOrders state
+  useEffect(() => {
+    if (incomingOrders.length > 0) {
+      if (AppState.currentState === 'active') {
+        playOrderSound();
+      }
+    } else {
+      stopOrderNotificationSound();
+    }
+  }, [incomingOrders.length]);
+
+  // When app returns to active foreground and incoming orders exist, resume looping sound
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && incomingOrders.length > 0) {
+        playOrderSound();
+      } else if (nextAppState !== 'active') {
+        stopOrderNotificationSound();
+      }
+    });
+    return () => sub.remove();
+  }, [incomingOrders.length]);
 
   return (
     <OrdersContext.Provider

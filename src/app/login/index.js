@@ -85,7 +85,23 @@ export default function LoginScreen() {
           await AsyncStorage.setItem('lastActiveTimestamp', now.toString());
           dispatch(setUser(parsed));
           initFCMToken(parsed);
-          router.replace('/home');
+
+          let targetRoute = '/home';
+          if (Platform.OS !== 'web') {
+            try {
+              const notifeeModule = require('@notifee/react-native').default;
+              const initialNotifee = await notifeeModule.getInitialNotification();
+              const initialFCM = await messaging().getInitialNotification();
+              if (initialNotifee || initialFCM) {
+                console.log('[Auth Navigation] App opened from notification -> routing directly to /notifications');
+                targetRoute = '/notifications';
+              }
+            } catch (e) {
+              console.warn('[Auth Navigation] Error checking initial notification:', e);
+            }
+          }
+
+          router.replace(targetRoute);
           return;
         } else {
           await AsyncStorage.multiRemove(['userData', 'userToken', 'restId', 'lastActiveTimestamp']);

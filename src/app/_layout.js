@@ -100,40 +100,45 @@ function AppLayout() {
       console.log('Notification opened app from background:', remoteMessage);
       const orderId = remoteMessage?.data?.orderId || remoteMessage?.data?._id;
       if (orderId) markOrderAsNotified(orderId);
-      stopOrderNotificationSound(orderId);
-      stopOrderNotificationSound();
       router.push('/notifications');
     });
 
-    // 4. Handle FCM Notification Tap when app is launched from killed state
+    // 4. Handle Notification Tap when app is launched from killed state (FCM & Notifee)
     messaging()
       .getInitialNotification()
       .then((remoteMessage) => {
         if (remoteMessage) {
-          console.log('App launched from killed state via notification:', remoteMessage);
+          console.log('FCM initial notification opened:', remoteMessage);
           const orderId = remoteMessage?.data?.orderId || remoteMessage?.data?._id;
           if (orderId) markOrderAsNotified(orderId);
-          stopOrderNotificationSound(orderId);
-          stopOrderNotificationSound();
           setTimeout(() => {
-            router.push('/notifications');
-          }, 500);
+            router.replace('/notifications');
+          }, 200);
         }
       });
 
-    // 5. Notifee Notification Interaction Listener (stops sound & opens notifications/alerts page)
+    if (notifee) {
+      notifee.getInitialNotification().then((initialNotification) => {
+        if (initialNotification) {
+          console.log('Notifee initial notification opened:', initialNotification);
+          const orderId = initialNotification.notification?.data?.orderId || initialNotification.notification?.data?._id;
+          if (orderId) markOrderAsNotified(orderId);
+          setTimeout(() => {
+            router.replace('/notifications');
+          }, 200);
+        }
+      });
+    }
+
+    // 5. Notifee Notification Interaction Listener (navigates to notifications/alerts page)
     const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
       if (type === EventType.PRESS || type === EventType.ACTION_PRESS) {
         const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
         if (orderId) markOrderAsNotified(orderId);
-        stopOrderNotificationSound(orderId);
-        stopOrderNotificationSound();
         router.push('/notifications');
       } else if (type === EventType.DISMISSED) {
         const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
         if (orderId) markOrderAsNotified(orderId);
-        stopOrderNotificationSound(orderId);
-        stopOrderNotificationSound();
       }
     });
 

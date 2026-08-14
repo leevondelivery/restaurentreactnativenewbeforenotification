@@ -3,6 +3,7 @@ import firebase from '@react-native-firebase/app';
 import messaging from '@react-native-firebase/messaging';
 import notifee, { AndroidImportance, AndroidVisibility } from '@notifee/react-native';
 import { registerFCMToken } from '@/services/api';
+import { playOrderSound, stopOrderSoundNative } from './soundService';
 
 // Safe check to guarantee default Firebase App is initialized
 if (!firebase.apps || firebase.apps.length === 0) {
@@ -97,10 +98,10 @@ async function showSingleNotification(orderData, isForeground = false) {
       data: safeData,
       android: {
         channelId: ORDER_CHANNEL_ID,
-        // HIGH importance pops up heads-up banner & plays custom sound whether app is in foreground or background
+        // HIGH importance pops up heads-up banner & plays custom sound continuously until user acts
         importance: AndroidImportance.HIGH,
         sound: 'ordernotification',
-        loopSound: false,
+        loopSound: true,
         ongoing: true,
         autoCancel: true,
         visibility: AndroidVisibility.PUBLIC,
@@ -122,7 +123,7 @@ async function showSingleNotification(orderData, isForeground = false) {
 }
 
 /**
- * Display notification or play sound with 5-second repeating sound.
+ * Display notification and trigger native looping order sound.
  * @param {object} orderData
  * @param {boolean} isForeground Pass true when inside app (sound only), false when outside app (banner + sound)
  */
@@ -130,26 +131,31 @@ export async function displayOrderNotification(orderData, isForeground = false) 
   try {
     await setupNotificationChannel();
 
-    const orderId = String(orderData.orderId || orderData._id || 'NEW');
+    const orderId = String(orderData?.orderId || orderData?._id || 'NEW');
     if (orderId && orderId !== 'NEW') {
       markOrderAsNotified(orderId);
     }
 
-    // 1. Trigger initial notification & sound immediately
+    // 1. Trigger initial notification banner immediately
     await showSingleNotification(orderData, isForeground);
 
-    // 2. Set up 5-second repeating sound timer if not already active
-    if (!activeRepeatTimers.has(orderId)) {
-      const timerId = setInterval(async () => {
-        try {
-          console.log(`Re-triggering 5-second notification sound for Order #${orderId}`);
-          await showSingleNotification(orderData, isForeground);
-        } catch (e) {
-          console.error('Error in 5-second notification repeat timer:', e);
-        }
-      }, 5000);
+    if (isForeground) {
+      // Trigger native hardware continuous looping sound when inside app
+      await playOrderSound();
+    } else {
+      // When outside app, set up 5-second repeating notification sound alert until user reacts
+      if (!activeRepeatTimers.has(orderId)) {
+        const timerId = setInterval(async () => {
+          try {
+            console.log(`Re-triggering background notification sound for Order #${orderId}`);
+            await showSingleNotification(orderData, false);
+          } catch (e) {
+            console.error('Error in background notification repeat timer:', e);
+          }
+        }, 5000);
 
-      activeRepeatTimers.set(orderId, timerId);
+        activeRepeatTimers.set(orderId, timerId);
+      }
     }
   } catch (err) {
     console.error('Error displaying order notification:', err);
@@ -157,26 +163,30 @@ export async function displayOrderNotification(orderData, isForeground = false) 
 }
 
 /**
- * Cancel persistent notification & stop 5-second repeating sound when user acts on an order
+ * Cancel persistent notification & stop native looping order sound when user acts on an order
  */
 export async function stopOrderNotificationSound(orderId) {
   try {
+    // 1. Stop native Android looping MediaPlayer
+    await stopOrderSoundNative();
+
+    // 2. Clear any legacy repeat timers
     const key = orderId ? String(orderId) : null;
     if (key && activeRepeatTimers.has(key)) {
       clearInterval(activeRepeatTimers.get(key));
       activeRepeatTimers.delete(key);
     } else if (!key) {
-      // Clear all timers if no orderId specified
       activeRepeatTimers.forEach((timerId) => clearInterval(timerId));
       activeRepeatTimers.clear();
     }
 
+    // 3. Cancel notification banner
     if (orderId) {
       await notifee.cancelNotification(`order_${String(orderId)}`);
     } else {
       await notifee.cancelAllNotifications();
     }
-    console.log(`Order notification sound & 5-second timer stopped for Order #${orderId || 'ALL'}`);
+    console.log(`Order notification sound & notification banner stopped for Order #${orderId || 'ALL'}`);
   } catch (err) {
     console.error('Error stopping notification sound:', err);
   }
