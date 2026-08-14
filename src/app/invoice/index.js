@@ -8,6 +8,7 @@ import {
   StatusBar,
   TouchableOpacity,
   Platform,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,13 +46,22 @@ export default function OrderInvoiceScreen() {
     }
   };
 
+  const isNavigatingRef = React.useRef(false);
+
   const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/orders');
-    }
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    router.replace('/settings');
   };
+
+  useEffect(() => {
+    const onBackPress = () => {
+      handleBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, []);
 
   // Fallback defaults matching user reference screenshot
   const restaurantName =

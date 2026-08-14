@@ -136,21 +136,22 @@ export async function displayOrderNotification(orderData, isForeground = false) 
       markOrderAsNotified(orderId);
     }
 
-    // 1. Trigger initial notification banner immediately
+    // 1. Display system notification banner with sound alert
     await showSingleNotification(orderData, isForeground);
 
-    if (isForeground) {
-      // Trigger native hardware continuous looping sound when inside app
-      await playOrderSound();
-    } else {
-      // When outside app, set up 5-second repeating notification sound alert until user reacts
+    // 2. Play in-app native order sound
+    await playOrderSound();
+
+    // 3. 5-second loop: Repeat sound & system notification alert every 5 seconds until order is accepted/rejected
+    if (orderId && orderId !== 'NEW') {
       if (!activeRepeatTimers.has(orderId)) {
         const timerId = setInterval(async () => {
           try {
-            console.log(`Re-triggering background notification sound for Order #${orderId}`);
-            await showSingleNotification(orderData, false);
+            console.log(`[5-sec Alert Loop] Re-triggering sound & notification for Order #${orderId}`);
+            await playOrderSound();
+            await showSingleNotification(orderData, isForeground);
           } catch (e) {
-            console.error('Error in background notification repeat timer:', e);
+            console.error('Error in 5-second alert loop timer:', e);
           }
         }, 5000);
 
@@ -170,7 +171,7 @@ export async function stopOrderNotificationSound(orderId) {
     // 1. Stop native Android looping MediaPlayer
     await stopOrderSoundNative();
 
-    // 2. Clear any legacy repeat timers
+    // 2. Clear the 5-second alert loop timer for this orderId (or all if un-specified)
     const key = orderId ? String(orderId) : null;
     if (key && activeRepeatTimers.has(key)) {
       clearInterval(activeRepeatTimers.get(key));
@@ -180,13 +181,13 @@ export async function stopOrderNotificationSound(orderId) {
       activeRepeatTimers.clear();
     }
 
-    // 3. Cancel notification banner
+    // 3. Cancel system notification banner
     if (orderId) {
       await notifee.cancelNotification(`order_${String(orderId)}`);
     } else {
       await notifee.cancelAllNotifications();
     }
-    console.log(`Order notification sound & notification banner stopped for Order #${orderId || 'ALL'}`);
+    console.log(`Order notification sound & 5-sec loop timer stopped for Order #${orderId || 'ALL'}`);
   } catch (err) {
     console.error('Error stopping notification sound:', err);
   }

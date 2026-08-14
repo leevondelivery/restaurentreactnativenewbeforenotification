@@ -22,39 +22,31 @@ import { useOrders } from '@/context/OrdersContext';
 import './orders.css';
 
 export const getDisplayOrderId = (order) => {
-  if (!order) return 'ORD-00000';
+  if (!order) return '';
 
-  // Extract raw order ID directly from MongoDB schema fields
-  const rawId =
-    order.orderId ||
-    order.order_id ||
-    order.displayOrderId ||
-    order.customOrderId ||
-    order.orderNumber ||
-    order.id ||
-    order._id ||
-    '';
+  const userIdStr = order.userId ? String(order.userId).trim() : '';
 
-  const clean = String(rawId).trim();
-  if (!clean) return 'ORD-00000';
+  const candidates = [
+    order.displayOrderId,
+    order.customOrderId,
+    order.orderNumber,
+    order.orderId,
+    order.order_id,
+    order.id,
+    order._id,
+  ];
 
-  // If orderId accidentally equals userId, fallback to order._id to avoid displaying user ID
-  if (order.userId && clean === String(order.userId).trim() && order._id) {
-    const fallback = String(order._id).trim();
-    if (/^[a-f0-9]{24}$/i.test(fallback)) {
-      return `ORD-${fallback.slice(-6).toUpperCase()}`;
+  for (const cand of candidates) {
+    if (cand !== undefined && cand !== null) {
+      const str = String(cand).trim();
+      if (!str) continue;
+      // Skip if value equals userId
+      if (userIdStr && str === userIdStr && order._id && String(order._id).trim() !== userIdStr) continue;
+      return str;
     }
-    return fallback;
   }
 
-  if (/^ORD-/i.test(clean)) return clean.toUpperCase();
-
-  // Format 24-char Mongo ObjectId hex string into short ORD-XXXXXX
-  if (/^[a-f0-9]{24}$/i.test(clean)) {
-    return `ORD-${clean.slice(-6).toUpperCase()}`;
-  }
-
-  return clean;
+  return '';
 };
 
 // Live Preparation Countdown Badge Component
@@ -148,7 +140,8 @@ export default function OrdersScreen() {
         setSelectedInvoiceOrder(null);
         return true;
       }
-      return false;
+      handleBack();
+      return true;
     };
 
     const subscription = BackHandler.addEventListener(
@@ -178,11 +171,7 @@ export default function OrdersScreen() {
   const handleBack = () => {
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/settings');
-    }
+    router.replace('/settings');
   };
 
   const handleOpenInvoiceModal = (orderObj) => {

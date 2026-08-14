@@ -10,6 +10,7 @@ import {
   TextInput,
   Switch,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -102,13 +103,22 @@ export default function MyMenuScreen() {
     }
   };
 
+  const isNavigatingRef = React.useRef(false);
+
   const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/home');
-    }
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    router.replace('/settings');
   };
+
+  useEffect(() => {
+    const onBackPress = () => {
+      handleBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, []);
 
   const safeMenuItems = Array.isArray(menuItems) ? menuItems : [];
   const filteredItems = safeMenuItems.filter((item) =>

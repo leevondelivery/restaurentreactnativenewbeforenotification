@@ -37,7 +37,6 @@
   justify-content: center;
   align-items: center;
   transform: translateY(-12px);
-  box-shadow: 0px 6px 14px rgba(0, 0, 0, 0.18);
   border-width: 3px;
   border-color: #F7F7EB;
 }
@@ -49,7 +48,6 @@
   background-color: #FFFFFF;
   justify-content: center;
   align-items: center;
-  box-shadow: 0px 2px 6px rgba(0, 0, 0, 0.08);
 }
 
 .badgeCircle {

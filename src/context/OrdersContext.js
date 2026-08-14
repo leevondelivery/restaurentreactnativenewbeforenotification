@@ -204,7 +204,7 @@ export const OrdersProvider = ({ children }) => {
             markOrderAsNotified(key);
 
             if (!alreadyNotified && !isInitialFetchRef.current) {
-              displayOrderNotification(ord);
+              displayOrderNotification(ord, true);
             }
           }
         });
@@ -266,9 +266,16 @@ export const OrdersProvider = ({ children }) => {
   const acceptOrder = useCallback(
     async (targetOrder, prepMins) => {
       try {
-        const orderIdVal = targetOrder._id || targetOrder.orderId || 'MONGODB_OBJECT_ID';
+        const orderIdVal =
+          targetOrder.orderId ||
+          targetOrder.order_id ||
+          targetOrder.displayOrderId ||
+          targetOrder.customOrderId ||
+          targetOrder.orderNumber ||
+          targetOrder._id ||
+          'MONGODB_OBJECT_ID';
         const idStr = String(orderIdVal);
-        const altIdStr = String(targetOrder.orderId || '');
+        const altIdStr = String(targetOrder.orderId || targetOrder._id || '');
 
         processedOrderIdsRef.current.add(idStr);
         if (altIdStr) processedOrderIdsRef.current.add(altIdStr);

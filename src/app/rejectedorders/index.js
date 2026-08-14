@@ -33,11 +33,7 @@ export default function RejectedOrdersScreen() {
   const handleBack = () => {
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/settings');
-    }
+    router.replace('/settings');
   };
 
   useEffect(() => {

@@ -121,7 +121,7 @@ export default function TrackerScreen() {
             </Text>
             <TouchableOpacity
               style={styles.refreshButton}
-              onPress={() => fetchAcceptedOrders(false)}
+              onPress={onRefresh}
               activeOpacity={0.8}
             >
               <Text style={styles.refreshButtonText}>Refresh</Text>
