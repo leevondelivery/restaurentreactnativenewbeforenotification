@@ -17,8 +17,10 @@ const OrdersContext = createContext();
 export const getBaseApiUrl = () => BASE_URL;
 
 export const OrdersProvider = ({ children }) => {
-  const [orders, setOrders] = useState([]); // Accepted / Active preparing orders from acceptedorders
-  const [trackerOrders, setTrackerOrders] = useState([]); // Tracker orders from acceptedbyrestorents
+  // Data from 'accepted orders' (acceptedorders) collection -> used in /tracker
+  const [orders, setOrders] = useState([]); 
+  // Data from 'acceptedbyrestaurent' (acceptedbyrestorents) collection -> used in /orders
+  const [trackerOrders, setTrackerOrders] = useState([]); 
   const [incomingOrders, setIncomingOrders] = useState([]); // Pending incoming orders
   const [incomingCount, setIncomingCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -318,6 +320,31 @@ export const OrdersProvider = ({ children }) => {
         processedOrderIdsRef.current.add(idStr);
         if (altIdStr) processedOrderIdsRef.current.add(altIdStr);
 
+        // Read restaurantId & restaurantName fresh from AsyncStorage
+        let asyncRestId = restaurantInfo.restId || '';
+        let asyncRestName = targetOrder.restaurantName || restaurantInfo.address || '';
+        try {
+          const storedRestId = await AsyncStorage.getItem('restId');
+          const storedUserStr = await AsyncStorage.getItem('userData');
+          if (storedRestId) asyncRestId = storedRestId;
+          if (storedUserStr) {
+            const u = JSON.parse(storedUserStr);
+            asyncRestId = storedRestId ||
+              u?.restId ||
+              u?.restaurantId ||
+              u?.restaurant_id ||
+              u?._id ||
+              asyncRestId;
+            asyncRestName =
+              u?.name ||
+              u?.restaurantName ||
+              u?.restName ||
+              asyncRestName;
+          }
+        } catch (_e) {
+          console.warn('OrdersContext: could not read restId/userData from AsyncStorage');
+        }
+
         const acceptedAtStr = new Date().toISOString();
         const estimatedPrepEndTimeStr = new Date(Date.now() + prepMins * 60000).toISOString();
 
@@ -342,32 +369,6 @@ export const OrdersProvider = ({ children }) => {
           await apiAcceptOrder(payload);
         } catch (err) {
           console.warn('OrdersContext: acceptOrder API call warning:', err);
-        }
-
-        // 2. Read restaurantId & restaurantName fresh from AsyncStorage so it
-        //    always matches what is stored (same value used to filter payments)
-        let asyncRestId = restaurantInfo.restId || '';
-        let asyncRestName = targetOrder.restaurantName || restaurantInfo.address || '';
-        try {
-          const storedRestId = await AsyncStorage.getItem('restId');
-          const storedUserStr = await AsyncStorage.getItem('userData');
-          if (storedRestId) asyncRestId = storedRestId;
-          if (storedUserStr) {
-            const u = JSON.parse(storedUserStr);
-            asyncRestId = storedRestId ||
-              u?.restId ||
-              u?.restaurantId ||
-              u?.restaurant_id ||
-              u?._id ||
-              asyncRestId;
-            asyncRestName =
-              u?.name ||
-              u?.restaurantName ||
-              u?.restName ||
-              asyncRestName;
-          }
-        } catch (_e) {
-          console.warn('OrdersContext: could not read restId/userData from AsyncStorage for pendingpayments');
         }
 
         // grossTotal = totalPrice (raw order amount before commission)
@@ -419,7 +420,6 @@ export const OrdersProvider = ({ children }) => {
         };
 
         setOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
-        setTrackerOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
         // Locally remove from incoming list & stop ringing sound
         stopOrderNotificationSound(orderIdVal);
         stopOrderNotificationSound(altIdStr);

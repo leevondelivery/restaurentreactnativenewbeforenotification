@@ -126,8 +126,9 @@ function PrepTimerBadge({ order }) {
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { acceptedByRestaurantsOrders, trackerOrders, loading, fetchGlobalOrders, restaurantInfo } = useOrders();
-  const safeOrders = Array.isArray(acceptedByRestaurantsOrders) ? acceptedByRestaurantsOrders : Array.isArray(trackerOrders) ? trackerOrders : [];
+  // Fetch data strictly from 'acceptedbyrestaurent' collection via OrdersContext
+  const { acceptedByRestaurantsOrders, loading, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const safeOrders = Array.isArray(acceptedByRestaurantsOrders) ? acceptedByRestaurantsOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [expandedAccordionMap, setExpandedAccordionMap] = useState({});
 

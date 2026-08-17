@@ -5,7 +5,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { useOrders } from '@/context/OrdersContext';
-import { fetchAcceptedOrders, fetchRestaurantStats, updateRestaurantStatus } from '@/services/api';
+import { fetchAcceptedByRestaurants, fetchRestaurantStats, updateRestaurantStatus } from '@/services/api';
 import {
   Animated,
   Easing,
@@ -25,7 +25,7 @@ import './home.css';
 export default function HomeScreen() {
   const router = useRouter();
   const reduxUserData = useSelector((state) => state.user.userData);
-  const { orders: globalOrders, fetchGlobalOrders } = useOrders();
+  const { acceptedByRestaurantsOrders, fetchGlobalOrders } = useOrders();
   const [userData, setUserData] = useState(reduxUserData || null);
   const [isOpen, setIsOpen] = useState(true);
 
@@ -51,7 +51,7 @@ export default function HomeScreen() {
 
   // Compute stats instantly from background orders context
   useEffect(() => {
-    const rawOrdersList = Array.isArray(globalOrders) ? globalOrders : [];
+    const rawOrdersList = Array.isArray(acceptedByRestaurantsOrders) ? acceptedByRestaurantsOrders : [];
     const targetRestId = String(
       userData?.restId || userData?.restaurantId || userData?.restaurant_id || userData?._id || userData?.id || ''
     ).trim();
@@ -59,7 +59,7 @@ export default function HomeScreen() {
     const matchingOrders = rawOrdersList.filter((ord) => {
       if (!targetRestId) return true;
       const ordRestId = String(
-        ord.restaurantId || ord.restId || ord.restaurant_id || ord.storeId || ord.vendorId || ord.restaurant || ''
+        ord.restaurantId || ord.restId || ord.restaurant_id || ord.storeId || ord.vendorId || (ord.restaurant && typeof ord.restaurant === 'object' ? (ord.restaurant.restId || ord.restaurant.id || ord.restaurant._id) : ord.restaurant) || ''
       ).trim();
       return ordRestId.toLowerCase() === targetRestId.toLowerCase();
     });
@@ -102,7 +102,7 @@ export default function HomeScreen() {
     setTodayOrders(tOrders);
     setTotalEarnings(totEarnings);
     setTotalOrders(totOrders);
-  }, [globalOrders, userData]);
+  }, [acceptedByRestaurantsOrders, userData]);
 
   // Load stats on mount and whenever screen comes into focus
   useFocusEffect(
@@ -118,11 +118,11 @@ export default function HomeScreen() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-      const response = await fetchAcceptedOrders(targetRestId, controller.signal);
+      const response = await fetchAcceptedByRestaurants(targetRestId, controller.signal);
       clearTimeout(timeoutId);
 
       const data = await response.json();
-      console.log('Fetched accepted orders for home stats:', data);
+      console.log('Fetched acceptedbyrestaurants orders for home stats:', data);
 
       let rawOrdersList = [];
       if (response.ok) {
@@ -160,11 +160,11 @@ export default function HomeScreen() {
 
       // STRICT FILTER: Compare restaurant ID of each order with targetRestId
       const matchingOrders = rawOrdersList.filter((ord) => {
-        if (!targetRestId) return false;
+        if (!targetRestId) return true;
         const ordRestId = String(
-          ord.restaurantId || ord.restId || ord.restaurant_id || ord.storeId || ord.vendorId || ord.restaurant || ''
+          ord.restaurantId || ord.restId || ord.restaurant_id || ord.storeId || ord.vendorId || (ord.restaurant && typeof ord.restaurant === 'object' ? (ord.restaurant.restId || ord.restaurant.id || ord.restaurant._id) : ord.restaurant) || ''
         ).trim();
-        return ordRestId === String(targetRestId).trim();
+        return ordRestId.toLowerCase() === String(targetRestId).trim().toLowerCase();
       });
 
       const now = new Date();

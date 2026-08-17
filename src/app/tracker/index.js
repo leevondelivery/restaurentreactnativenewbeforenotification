@@ -10,10 +10,12 @@ import {
   RefreshControl,
   BackHandler,
   Platform,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import Constants from 'expo-constants';
+import * as Print from 'expo-print';
 import { useOrders } from '@/context/OrdersContext';
 
 import { getDisplayOrderId } from '../orders';
@@ -21,21 +23,31 @@ import './tracker.css';
 
 export default function TrackerScreen() {
   const router = useRouter();
-  const { acceptedOrders, orders: globalOrders, loading: globalLoading, fetchGlobalOrders } = useOrders();
-  const rawTrackerList = Array.isArray(acceptedOrders) ? acceptedOrders : Array.isArray(globalOrders) ? globalOrders : [];
+  // Fetch data strictly from 'acceptedorders' collection via OrdersContext
+  const { acceptedOrders, loading: globalLoading, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const rawTrackerList = Array.isArray(acceptedOrders) ? acceptedOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(Date.now());
   const isNavigatingRef = useRef(false);
 
+  // Receipt Modal State
+  const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState(null);
+  const [invoiceModalVisible, setInvoiceModalVisible] = useState(false);
+
   // Device level Back Button / Gesture Navigation Compatibility
   useEffect(() => {
     const onBackPress = () => {
+      if (invoiceModalVisible) {
+        setInvoiceModalVisible(false);
+        setSelectedInvoiceOrder(null);
+        return true;
+      }
       router.replace('/home');
       return true;
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
-  }, [router]);
+  }, [router, invoiceModalVisible]);
 
   // 1-second clock for countdown timers
   useEffect(() => {
@@ -75,19 +87,150 @@ export default function TrackerScreen() {
   }));
   const loading = globalLoading && orders.length === 0;
 
-  const handlePrintInvoice = (order) => {
-    if (isNavigatingRef.current) return;
-    isNavigatingRef.current = true;
-    setTimeout(() => {
-      isNavigatingRef.current = false;
-    }, 400);
+  const handleOpenInvoiceModal = (orderObj) => {
+    setSelectedInvoiceOrder(orderObj);
+    setInvoiceModalVisible(true);
+  };
 
-    router.push({
-      pathname: '/invoice',
-      params: {
-        orderData: JSON.stringify(order),
-      },
+  const generateInvoiceHtml = (order) => {
+    if (!order || typeof order !== 'object') return '';
+    const restName = order.restaurantName || restaurantInfo?.name || 'Amigoo Noshery';
+    const restAddress = restaurantInfo?.address || 'Nandyal Road, Kurnool';
+    const fssaiNum = restaurantInfo?.fssai || '12345678901234';
+    const orderIdVal = getDisplayOrderId(order);
+
+    const dateStr = order.acceptedAt
+      ? new Date(order.acceptedAt).toLocaleString()
+      : new Date().toLocaleString();
+
+    const commRate = Number(order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12) || 12;
+
+    let itemsRaw = [];
+    if (Array.isArray(order.items)) {
+      itemsRaw = order.items;
+    } else if (typeof order.items === 'string') {
+      try {
+        const parsed = JSON.parse(order.items);
+        if (Array.isArray(parsed)) itemsRaw = parsed;
+      } catch (e) {}
+    }
+
+    const itemsList = itemsRaw.map((it) => {
+      if (!it || typeof it !== 'object') {
+        return { name: String(it || 'Item'), quantity: 1, price: 0 };
+      }
+      const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
+      const discountedPrice =
+        it.priceAfterCommission !== undefined
+          ? Number(it.priceAfterCommission) || 0
+          : rawPrice * (1 - commRate / 100);
+      return {
+        name: it.name || 'Item',
+        quantity: Number(it.quantity || it.qty || 1) || 1,
+        price: discountedPrice,
+      };
     });
+
+    const calculatedNetTotal = itemsList.reduce(
+      (acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+      0
+    );
+
+    const netTotal = Number(order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetTotal) || calculatedNetTotal;
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+          <title>Receipt - ${orderIdVal}</title>
+          <style>
+            @page {
+              size: auto;
+              margin: 0;
+            }
+            body {
+              font-family: 'Courier New', Courier, monospace;
+              padding: 24px;
+              color: #111111;
+              background-color: #ffffff;
+              max-width: 420px;
+              margin: 0 auto;
+            }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            .divider { text-align: center; margin: 10px 0; color: #888888; letter-spacing: 1px; }
+            table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+            th, td { font-family: 'Courier New', Courier, monospace; padding: 6px 0; font-size: 13px; }
+            th { text-align: left; font-weight: bold; }
+            .right { text-align: right; font-weight: bold; }
+            .total-row td { border-top: 1px dashed #444; border-bottom: 1px dashed #444; font-size: 15px; padding: 8px 0; }
+            .footer { margin-top: 18px; font-size: 11px; color: #666; }
+          </style>
+        </head>
+        <body>
+          <div class="center bold" style="font-size: 18px;">${restName}</div>
+          <div class="center" style="font-size: 12px; margin-top: 4px;">Address: ${restAddress}</div>
+          <div class="center" style="font-size: 12px;">FSSAI: ${fssaiNum}</div>
+          
+          <div class="divider">---------------------------------------------</div>
+          
+          <div style="font-size: 13px;"><strong>Order ID:</strong> ${orderIdVal}</div>
+          <div style="font-size: 13px;"><strong>Date:</strong> ${dateStr}</div>
+          
+          <div class="divider">---------------------------------------------</div>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>ITEM</th>
+                <th class="center">QTY</th>
+                <th class="right">NET PRICE</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsList
+                .map(
+                  (item) => `
+                <tr>
+                  <td>${item.name}</td>
+                  <td class="center">${item.quantity}</td>
+                  <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
+                </tr>
+              `
+                )
+                .join('')}
+              <tr class="total-row">
+                <td colspan="2" class="bold">TOTAL (Net After ${commRate}% Comm)</td>
+                <td class="right bold">₹${(Number(netTotal) || 0).toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+          
+          <div class="divider">---------------------------------------------</div>
+          
+          <div class="center footer">
+            Thank you for ordering with us!<br/>
+            Have a pleasant meal!
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  const handlePrintReceipt = async (order) => {
+    try {
+      const html = generateInvoiceHtml(order);
+
+      if (Platform.OS === 'web') {
+        await Print.printAsync({ html });
+      } else {
+        const { uri } = await Print.printToFileAsync({ html });
+        await Print.printAsync({ uri });
+      }
+    } catch (err) {
+      console.error('Error printing receipt:', err);
+    }
   };
 
   return (
@@ -133,9 +276,9 @@ export default function TrackerScreen() {
           </View>
         )}
 
-        {orders.map((order, idx) => {
+        {orders.map((order, orderIdx) => {
           if (!order || typeof order !== 'object') return null;
-          const orderIdVal = getDisplayOrderId(order) || `ORD-${idx + 1}`;
+          const orderIdVal = getDisplayOrderId(order) || `ORD-${orderIdx + 1}`;
           let formattedDate = new Date().toLocaleString();
           if (order.acceptedAt || order.createdAt) {
             try {
@@ -203,7 +346,7 @@ export default function TrackerScreen() {
             order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetEarnings
           ) || calculatedNetEarnings;
 
-          const orderKey = String(order._id || orderIdVal || `track-${idx}`);
+          const orderKey = String(order._id || order.orderId || orderIdVal || `track-${orderIdx}`);
 
           return (
             <View key={orderKey} style={styles.orderOuterCard}>
@@ -227,8 +370,8 @@ export default function TrackerScreen() {
               </View>
 
               {/* Items Rows */}
-              {itemsList.map((item, idx) => (
-                <View key={idx} style={styles.tableItemRow}>
+              {itemsList.map((item, itemIdx) => (
+                <View key={itemIdx} style={styles.tableItemRow}>
                   <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
                   <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>{item.qty}</Text>
 
@@ -276,7 +419,7 @@ export default function TrackerScreen() {
               <View style={styles.cardBottomActionRow}>
                 <TouchableOpacity
                   style={styles.printInvoiceCapsuleButton}
-                  onPress={() => handlePrintInvoice(order)}
+                  onPress={() => handleOpenInvoiceModal(order)}
                   activeOpacity={0.8}
                 >
                   <Ionicons name="print" size={18} color="#FFFFFF" />
@@ -287,6 +430,117 @@ export default function TrackerScreen() {
           );
         })}
       </ScrollView>
+
+      {/* Printable Receipt Modal */}
+      {selectedInvoiceOrder && (
+        <Modal
+          visible={invoiceModalVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setInvoiceModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.receiptModalCard}>
+              <TouchableOpacity
+                style={styles.closeCrossCircle}
+                onPress={() => setInvoiceModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={20} color="#333333" />
+              </TouchableOpacity>
+
+              <ScrollView style={styles.receiptPaperCard} showsVerticalScrollIndicator={false}>
+                <View style={styles.restaurantHeaderSection}>
+                  <Text style={styles.restaurantNameText}>
+                    {selectedInvoiceOrder.restaurantName || restaurantInfo?.name || 'Amigoo Noshery'}
+                  </Text>
+                  <Text style={styles.restaurantSubText}>
+                    Address: {restaurantInfo?.address || 'Nandyal Road, Kurnool'}
+                  </Text>
+                  <Text style={styles.restaurantSubText}>
+                    FSSAI: {restaurantInfo?.fssai || '12345678901234'}
+                  </Text>
+                </View>
+
+                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+
+                <Text style={styles.receiptOrderText}>
+                  Order ID: {getDisplayOrderId(selectedInvoiceOrder)}
+                </Text>
+                <Text style={styles.receiptOrderText}>
+                  Date: {selectedInvoiceOrder.acceptedAt ? new Date(selectedInvoiceOrder.acceptedAt).toLocaleString() : new Date().toLocaleString()}
+                </Text>
+
+                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+
+                {(() => {
+                  let modalItems = [];
+                  if (Array.isArray(selectedInvoiceOrder.items)) {
+                    modalItems = selectedInvoiceOrder.items;
+                  } else if (typeof selectedInvoiceOrder.items === 'string') {
+                    try {
+                      const p = JSON.parse(selectedInvoiceOrder.items);
+                      if (Array.isArray(p)) modalItems = p;
+                    } catch (e) {}
+                  }
+                  return modalItems.map((it, i) => {
+                    if (!it || typeof it !== 'object') {
+                      return (
+                        <View key={i} style={styles.receiptItemRow}>
+                          <Text style={[styles.receiptItemText, { flex: 2 }]}>{String(it || 'Item')}</Text>
+                          <Text style={[styles.receiptItemText, { flex: 1, textAlign: 'center' }]}>1</Text>
+                          <Text style={[styles.receiptItemText, { flex: 1, textAlign: 'right' }]}>₹0.00</Text>
+                        </View>
+                      );
+                    }
+                    const rawP = it.originalPrice ?? it.price ?? 0;
+                    const comm = selectedInvoiceOrder.commissionRate ?? restaurantInfo?.commission ?? 12;
+                    const discP = it.priceAfterCommission ?? rawP * (1 - comm / 100);
+                    return (
+                      <View key={i} style={styles.receiptItemRow}>
+                        <Text style={[styles.receiptItemText, { flex: 2 }]}>{it.name || 'Item'}</Text>
+                        <Text style={[styles.receiptItemText, { flex: 1, textAlign: 'center' }]}>
+                          {it.quantity || it.qty || 1}
+                        </Text>
+                        <Text style={[styles.receiptItemText, { flex: 1, textAlign: 'right' }]}>
+                          ₹{Number(discP * (it.quantity || it.qty || 1)).toFixed(2)}
+                        </Text>
+                      </View>
+                    );
+                  });
+                })()}
+
+                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+
+                <View style={styles.receiptTotalRow}>
+                  <Text style={styles.receiptTotalLabel}>TOTAL (Net):</Text>
+                  <Text style={styles.receiptTotalValue}>
+                    ₹{Number(selectedInvoiceOrder.totalPriceAfterCommission ?? selectedInvoiceOrder.netEarnings ?? 0).toFixed(2)}
+                  </Text>
+                </View>
+
+                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+
+                <Text style={styles.receiptFooterText}>
+                  Thank you for ordering with us!
+                </Text>
+              </ScrollView>
+
+              <TouchableOpacity
+                style={styles.modalPrintButton}
+                onPress={() => {
+                  handlePrintReceipt(selectedInvoiceOrder);
+                  setInvoiceModalVisible(false);
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="print" size={18} color="#FFFFFF" />
+                <Text style={styles.modalPrintButtonText}>Print Receipt</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -504,6 +758,109 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   printInvoiceButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  receiptModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    maxHeight: '85%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  closeCrossCircle: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F0F0F0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  receiptPaperCard: {
+    width: '100%',
+    marginBottom: 16,
+  },
+  restaurantHeaderSection: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  restaurantNameText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+    marginBottom: 4,
+  },
+  restaurantSubText: {
+    fontSize: 12,
+    color: '#666666',
+    marginBottom: 2,
+  },
+  dashedDivider: {
+    textAlign: 'center',
+    color: '#888888',
+    marginVertical: 8,
+  },
+  receiptOrderText: {
+    fontSize: 13,
+    color: '#111111',
+    marginBottom: 4,
+  },
+  receiptItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  receiptItemText: {
+    fontSize: 13,
+    color: '#111111',
+  },
+  receiptTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  receiptTotalLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  receiptTotalValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  receiptFooterText: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 8,
+  },
+  modalPrintButton: {
+    backgroundColor: '#0066FF',
+    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  modalPrintButtonText: {
     color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
