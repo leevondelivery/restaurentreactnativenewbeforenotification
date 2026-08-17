@@ -166,10 +166,18 @@ export default function RejectedOrdersScreen() {
               ? new Date(order.createdAt).toLocaleString()
               : new Date().toLocaleString());
 
-          const itemsList =
-            order.items && order.items.length > 0
-              ? order.items
-              : [{ name: 'Item', quantity: 1, price: order.totalPrice || 0 }];
+          let itemsList = [];
+          if (Array.isArray(order.items) && order.items.length > 0) {
+            itemsList = order.items;
+          } else if (typeof order.items === 'string') {
+            try {
+              const parsed = JSON.parse(order.items);
+              if (Array.isArray(parsed) && parsed.length > 0) itemsList = parsed;
+            } catch (e) {}
+          }
+          if (itemsList.length === 0) {
+            itemsList = [{ name: 'Item', quantity: 1, price: order.totalPrice || 0 }];
+          }
 
           // Calculate price after commission deduction for each item
           const itemCalculations = itemsList.map((it) => {

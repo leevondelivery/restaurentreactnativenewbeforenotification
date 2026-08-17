@@ -139,6 +139,11 @@ export default function NotificationsScreen() {
         <View style={styles.topHeaderPill}>
           <Ionicons name="notifications" size={20} color="#0AB28D" />
           <Text style={styles.topHeaderText}>Alerts</Text>
+          {safeIncomingOrders.length > 0 && (
+            <View style={styles.countBadgeHighlight}>
+              <Text style={styles.countBadgeHighlightText}>{safeIncomingOrders.length}</Text>
+            </View>
+          )}
         </View>
 
         {safeIncomingOrders.length === 0 ? (
@@ -177,14 +182,22 @@ export default function NotificationsScreen() {
                 })
               : new Date().toLocaleString();
 
-            const items = order.items && order.items.length > 0 ? order.items : [];
+            let itemsRaw = [];
+            if (Array.isArray(order.items)) {
+              itemsRaw = order.items;
+            } else if (typeof order.items === 'string') {
+              try {
+                const parsed = JSON.parse(order.items);
+                if (Array.isArray(parsed)) itemsRaw = parsed;
+              } catch (e) {}
+            }
 
             const commRate = Number(
               order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12
-            );
+            ) || 12;
 
             // Calculate price after commission discount
-            const itemCalculations = items.map((it) => {
+            const itemCalculations = itemsRaw.map((it) => {
               const rawPrice = it.originalPrice ?? it.price ?? 0;
               const discountedPrice =
                 it.priceAfterCommission ?? rawPrice * (1 - commRate / 100);
@@ -465,6 +478,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#111111',
+  },
+  countBadgeHighlight: {
+    backgroundColor: '#E54B3C',
+    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    marginLeft: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  countBadgeHighlightText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   emptyContainer: {
     flex: 1,

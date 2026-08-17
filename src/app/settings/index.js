@@ -182,10 +182,9 @@ export default function SettingsScreen() {
     { id: '3', title: 'Payments History', icon: 'card' },
     { id: '4', title: 'My Reviews', icon: 'star' },
     { id: '5', title: 'Rejected Orders', icon: 'ban' },
-    { id: '6', title: 'Battery Optimization Settings', icon: 'battery-charging' },
-    { id: '7', title: 'Contact Us', icon: 'mail' },
-    { id: '8', title: 'Privacy Policy', icon: 'shield-checkmark' },
-    { id: '9', title: 'Terms & Conditions', icon: 'document-text' },
+    { id: '6', title: 'Contact Us', icon: 'mail' },
+    { id: '7', title: 'Privacy Policy', icon: 'shield-checkmark' },
+    { id: '8', title: 'Terms & Conditions', icon: 'document-text' },
   ];
 
   return (

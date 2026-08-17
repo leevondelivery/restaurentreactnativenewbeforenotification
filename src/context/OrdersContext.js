@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { AppState } from 'react-native';
 import {
   fetchAcceptedOrders,
+  fetchAcceptedByRestaurants,
   fetchIncomingOrdersContext,
   rejectOrder as apiRejectOrder,
   acceptOrder as apiAcceptOrder,
@@ -16,7 +17,8 @@ const OrdersContext = createContext();
 export const getBaseApiUrl = () => BASE_URL;
 
 export const OrdersProvider = ({ children }) => {
-  const [orders, setOrders] = useState([]); // Accepted / Active preparing orders
+  const [orders, setOrders] = useState([]); // Accepted / Active preparing orders from acceptedorders
+  const [trackerOrders, setTrackerOrders] = useState([]); // Tracker orders from acceptedbyrestorents
   const [incomingOrders, setIncomingOrders] = useState([]); // Pending incoming orders
   const [incomingCount, setIncomingCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -138,7 +140,7 @@ export const OrdersProvider = ({ children }) => {
       }
 
       const filteredAccepted = acceptedOrdersData.filter((o) => {
-        if (!restId) return false;
+        if (!o) return false;
         const oRestId = String(
           o.restaurantId ||
           o.restId ||
@@ -150,10 +152,10 @@ export const OrdersProvider = ({ children }) => {
           ''
         ).trim();
 
-        if (oRestId) {
+        if (oRestId && restId) {
           return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
         }
-        return false;
+        return !restId;
       });
 
       setOrders(filteredAccepted);
@@ -161,6 +163,34 @@ export const OrdersProvider = ({ children }) => {
         if (o._id) processedOrderIdsRef.current.add(String(o._id));
         if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
       });
+
+      // 1b. Fetch Tracker Orders from acceptedbyrestorents
+      try {
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 4000);
+        const resTrack = await fetchAcceptedByRestaurants(restId, controller.signal);
+        clearTimeout(tid);
+        if (resTrack.ok) {
+          const jsonTrack = await resTrack.json();
+          const rawTrack = jsonTrack.orders || jsonTrack.data || (Array.isArray(jsonTrack) ? jsonTrack : []);
+          const filteredTrack = rawTrack.filter((o) => {
+            if (!o) return false;
+            const oRestId = String(
+              o.restaurantId ||
+              o.restId ||
+              o.restaurant_id ||
+              o.storeId ||
+              o.vendorId ||
+              ''
+            ).trim();
+            if (oRestId && restId) {
+              return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
+            }
+            return true;
+          });
+          setTrackerOrders(filteredTrack);
+        }
+      } catch (errTrack) {}
 
       // 2. Fetch Incoming Orders
       let incomingData = null;
@@ -209,6 +239,13 @@ export const OrdersProvider = ({ children }) => {
           }
         });
 
+        // Ensure continuous in-app sound loop plays until all incoming orders are accepted or rejected
+        if (filteredIncoming.length > 0) {
+          playOrderSound();
+        } else {
+          stopOrderNotificationSound();
+        }
+
         if (isInitialFetchRef.current) {
           isInitialFetchRef.current = false;
         }
@@ -216,6 +253,7 @@ export const OrdersProvider = ({ children }) => {
         setIncomingOrders(filteredIncoming);
         setIncomingCount(filteredIncoming.length);
       } else {
+        stopOrderNotificationSound();
         setIncomingOrders((prev) => {
           const filtered = prev.filter((o) => {
             const id1 = String(o._id || '');
@@ -285,6 +323,9 @@ export const OrdersProvider = ({ children }) => {
 
         const payload = {
           orderId: orderIdVal,
+          restaurantId: String(asyncRestId),
+          restId: String(asyncRestId),
+          restaurant_id: String(asyncRestId),
           rest: restaurantInfo.address,
           restaurantLocation: {
             lat: restaurantInfo.lat,
@@ -378,6 +419,7 @@ export const OrdersProvider = ({ children }) => {
         };
 
         setOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
+        setTrackerOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
         // Locally remove from incoming list & stop ringing sound
         stopOrderNotificationSound(orderIdVal);
         stopOrderNotificationSound(altIdStr);
@@ -437,6 +479,9 @@ export const OrdersProvider = ({ children }) => {
     <OrdersContext.Provider
       value={{
         orders,
+        acceptedOrders: orders,
+        trackerOrders,
+        acceptedByRestaurantsOrders: trackerOrders,
         incomingOrders,
         incomingCount,
         loading,

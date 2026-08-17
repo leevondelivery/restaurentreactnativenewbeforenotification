@@ -27,6 +27,9 @@ export const loginUser = (email, password, fcmToken) =>
 // Orders
 
 export const fetchAcceptedOrders = (restaurantId, signal) =>
+  fetch(BASE_URL + '/api/orders/acceptedorders?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
+
+export const fetchAcceptedByRestaurants = (restaurantId, signal) =>
   fetch(BASE_URL + '/api/orders/acceptedbyrestorents?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
 
 export const fetchIncomingOrders = (restaurantId, signal) =>

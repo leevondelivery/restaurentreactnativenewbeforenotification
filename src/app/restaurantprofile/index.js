@@ -131,6 +131,8 @@ export default function RestaurantProfileScreen() {
   };
 
 
+  const isNavigatingRef = useRef(false);
+
   const handleBack = () => {
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;

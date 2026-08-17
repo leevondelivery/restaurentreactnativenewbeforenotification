@@ -105,6 +105,8 @@ async function showSingleNotification(orderData, isForeground = false) {
         ongoing: true,
         autoCancel: true,
         visibility: AndroidVisibility.PUBLIC,
+        smallIcon: 'ic_stat_notification',
+        color: '#000000',
         pressAction: {
           id: 'default',
           launchActivity: 'default',
@@ -133,31 +135,19 @@ export async function displayOrderNotification(orderData, isForeground = false) 
 
     const orderId = String(orderData?.orderId || orderData?._id || 'NEW');
     if (orderId && orderId !== 'NEW') {
+      if (isOrderNotified(orderId)) {
+        // Notification banner was already triggered for this order — keep continuous sound loop playing
+        await playOrderSound();
+        return;
+      }
       markOrderAsNotified(orderId);
     }
 
-    // 1. Display system notification banner with sound alert
+    // 1. Display single system notification banner for this order
     await showSingleNotification(orderData, isForeground);
 
-    // 2. Play in-app native order sound
+    // 2. Play continuous native sound loop until user accepts or rejects
     await playOrderSound();
-
-    // 3. 5-second loop: Repeat sound & system notification alert every 5 seconds until order is accepted/rejected
-    if (orderId && orderId !== 'NEW') {
-      if (!activeRepeatTimers.has(orderId)) {
-        const timerId = setInterval(async () => {
-          try {
-            console.log(`[5-sec Alert Loop] Re-triggering sound & notification for Order #${orderId}`);
-            await playOrderSound();
-            await showSingleNotification(orderData, isForeground);
-          } catch (e) {
-            console.error('Error in 5-second alert loop timer:', e);
-          }
-        }, 5000);
-
-        activeRepeatTimers.set(orderId, timerId);
-      }
-    }
   } catch (err) {
     console.error('Error displaying order notification:', err);
   }

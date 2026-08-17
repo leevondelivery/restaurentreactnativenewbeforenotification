@@ -9,9 +9,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
+  Text,
   Platform,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
+import { useOrders } from '@/context/OrdersContext';
 
 import './navbar.css';
 
@@ -126,6 +128,10 @@ export default function BottomNavbar() {
     }
   };
 
+  const { incomingOrders, orders: globalOrders } = useOrders();
+  const incomingCount = Array.isArray(incomingOrders) ? incomingOrders.length : 0;
+  const acceptedCount = Array.isArray(globalOrders) ? globalOrders.length : 0;
+
   return (
     <View
       style={[
@@ -136,25 +142,41 @@ export default function BottomNavbar() {
     >
       <View style={styles.navbarPill} onLayout={onPillLayout}>
         {/* Active Circle Overlay with Smooth Native Spring Gliding */}
-        {activeIndex >= 0 && (
-          <Animated.View
-            style={[
-              styles.slidingActiveCircle,
-              {
-                transform: [{ translateX }, { translateY: -12 }],
-              },
-            ]}
-          >
-            <Ionicons
-              name={tabs[activeIndex]?.activeIcon || 'home'}
-              size={24}
-              color="#000000"
-            />
-          </Animated.View>
-        )}
+        {activeIndex >= 0 && (() => {
+          const activeTabId = tabs[activeIndex]?.id;
+          let activeBadgeCount = 0;
+          if (activeTabId === 'notifications') activeBadgeCount = incomingCount;
+          if (activeTabId === 'tracker') activeBadgeCount = acceptedCount;
+
+          return (
+            <Animated.View
+              style={[
+                styles.slidingActiveCircle,
+                {
+                  transform: [{ translateX }, { translateY: -12 }],
+                },
+              ]}
+            >
+              <Ionicons
+                name={tabs[activeIndex]?.activeIcon || 'home'}
+                size={24}
+                color="#000000"
+              />
+              {activeBadgeCount > 0 && (
+                <View style={styles.badgeCircleActive}>
+                  <Text style={styles.badgeText}>{activeBadgeCount > 99 ? '99+' : activeBadgeCount}</Text>
+                </View>
+              )}
+            </Animated.View>
+          );
+        })()}
 
         {/* Tab Touch Targets */}
         {tabs.map((tab, index) => {
+          let badgeCount = 0;
+          if (tab.id === 'notifications') badgeCount = incomingCount;
+          if (tab.id === 'tracker') badgeCount = acceptedCount;
+
           return (
             <TouchableOpacity
               key={tab.id}
@@ -164,6 +186,11 @@ export default function BottomNavbar() {
             >
               <View style={styles.navCircleInactive}>
                 <Ionicons name={tab.iconName} size={20} color="#000000" />
+                {badgeCount > 0 && (
+                  <View style={styles.badgeCircle}>
+                    <Text style={styles.badgeText}>{badgeCount > 99 ? '99+' : badgeCount}</Text>
+                  </View>
+                )}
               </View>
             </TouchableOpacity>
           );
@@ -223,8 +250,44 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  badgeCircle: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: '#E54B3C',
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    zIndex: 20,
+  },
+  badgeCircleActive: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#E54B3C',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    zIndex: 25,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+  },
 });
+

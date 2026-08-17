@@ -16,13 +16,13 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import Constants from 'expo-constants';
 import { useOrders } from '@/context/OrdersContext';
 
-import CustomLoader from '@/components/CustomLoader';
 import { getDisplayOrderId } from '../orders';
 import './tracker.css';
 
 export default function TrackerScreen() {
   const router = useRouter();
-  const { orders: globalOrders, loading: globalLoading, fetchGlobalOrders } = useOrders();
+  const { acceptedOrders, orders: globalOrders, loading: globalLoading, fetchGlobalOrders } = useOrders();
+  const rawTrackerList = Array.isArray(acceptedOrders) ? acceptedOrders : Array.isArray(globalOrders) ? globalOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(Date.now());
   const isNavigatingRef = useRef(false);
@@ -45,10 +45,17 @@ export default function TrackerScreen() {
     return () => clearInterval(timerInterval);
   }, []);
 
+  // 5-Second Background Polling Loop when Tracker screen is in focus
   useFocusEffect(
     useCallback(() => {
       isNavigatingRef.current = false;
       fetchGlobalOrders(true);
+
+      const pollingInterval = setInterval(() => {
+        fetchGlobalOrders(true);
+      }, 5000);
+
+      return () => clearInterval(pollingInterval);
     }, [fetchGlobalOrders])
   );
 
@@ -58,7 +65,7 @@ export default function TrackerScreen() {
     setRefreshing(false);
   };
 
-  const orders = globalOrders.map((ord, idx) => ({
+  const orders = rawTrackerList.map((ord, idx) => ({
     ...ord,
     startTime: ord.createdAt
       ? new Date(ord.createdAt).getTime()
@@ -102,17 +109,14 @@ export default function TrackerScreen() {
         <View style={styles.topHeaderPill}>
           <Ionicons name="checkmark-circle" size={20} color="#0AB28D" />
           <Text style={styles.topHeaderText}>Accepted Orders</Text>
+          {orders.length > 0 && (
+            <View style={styles.countBadgeHighlight}>
+              <Text style={styles.countBadgeHighlightText}>{orders.length}</Text>
+            </View>
+          )}
         </View>
 
-        {loading && orders.length === 0 && (
-          <CustomLoader
-            visible={loading}
-            title="Loading Orders..."
-            subtitle="Fetching accepted orders"
-          />
-        )}
-
-        {!loading && orders.length === 0 && (
+        {orders.length === 0 && (
           <View style={styles.emptyContainer}>
             <Ionicons name="checkmark-circle-outline" size={64} color="#736B5E" />
             <Text style={styles.emptyTitle}>No Accepted Orders</Text>
@@ -129,36 +133,58 @@ export default function TrackerScreen() {
           </View>
         )}
 
-        {orders.map((order) => {
-          const orderIdVal = getDisplayOrderId(order);
-          const formattedDate = order.acceptedAt
-            ? new Date(order.acceptedAt).toLocaleString('en-US', {
-                month: 'numeric',
-                day: 'numeric',
-                year: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              })
-            : order.createdAt
-            ? new Date(order.createdAt).toLocaleString()
-            : new Date().toLocaleString();
+        {orders.map((order, idx) => {
+          if (!order || typeof order !== 'object') return null;
+          const orderIdVal = getDisplayOrderId(order) || `ORD-${idx + 1}`;
+          let formattedDate = new Date().toLocaleString();
+          if (order.acceptedAt || order.createdAt) {
+            try {
+              const d = new Date(order.acceptedAt || order.createdAt);
+              if (!isNaN(d.getTime())) {
+                formattedDate = d.toLocaleString('en-US', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                });
+              }
+            } catch (e) {}
+          }
 
           const commRate = Number(
             order.commissionRate ?? order.commission ?? 12
-          );
+          ) || 12;
 
-          const itemsRaw = order.items && order.items.length > 0 ? order.items : [];
+          let itemsRaw = [];
+          if (Array.isArray(order.items)) {
+            itemsRaw = order.items;
+          } else if (typeof order.items === 'string') {
+            try {
+              const parsed = JSON.parse(order.items);
+              if (Array.isArray(parsed)) itemsRaw = parsed;
+            } catch (e) {}
+          }
 
           const itemsList = itemsRaw.map((it) => {
-            const rawPrice = Number(it.originalPrice ?? it.price ?? 0);
+            if (!it || typeof it !== 'object') {
+              return {
+                name: String(it || 'Item'),
+                rawPrice: 0,
+                discountedPrice: 0,
+                qty: 1,
+              };
+            }
+            const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
             const discountedPrice =
               it.priceAfterCommission !== undefined
-                ? Number(it.priceAfterCommission)
+                ? Number(it.priceAfterCommission) || 0
                 : rawPrice * (1 - commRate / 100);
-            const qty = Number(it.quantity || it.qty || 1);
+            const qty = Number(it.quantity || it.qty || 1) || 1;
             return {
               ...it,
+              name: it.name || 'Item',
               rawPrice,
               discountedPrice,
               qty,
@@ -166,19 +192,21 @@ export default function TrackerScreen() {
           });
 
           const totalDistinctItems = itemsList.length;
-          const totalQtySum = itemsList.reduce((acc, it) => acc + it.qty, 0);
+          const totalQtySum = itemsList.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
 
           const calculatedNetEarnings = itemsList.reduce(
-            (acc, it) => acc + it.discountedPrice * it.qty,
+            (acc, it) => acc + (Number(it.discountedPrice) || 0) * (Number(it.qty) || 1),
             0
           );
 
           const finalTotalPrice = Number(
             order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetEarnings
-          );
+          ) || calculatedNetEarnings;
+
+          const orderKey = String(order._id || orderIdVal || `track-${idx}`);
 
           return (
-            <View key={order._id || orderIdVal} style={styles.orderOuterCard}>
+            <View key={orderKey} style={styles.orderOuterCard}>
               {/* Card Title & Date Header */}
               <View style={styles.orderHeaderSection}>
                 <Text style={styles.orderIdMainTitle}>ORDER ID : {orderIdVal}</Text>
@@ -290,6 +318,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#111111',
+  },
+  countBadgeHighlight: {
+    backgroundColor: '#0AB28D',
+    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    marginLeft: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  countBadgeHighlightText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   emptyContainer: {
     flex: 1,

@@ -79,10 +79,18 @@ export default function OrderInvoiceScreen() {
 
   const commRate = order?.commissionRate ?? userData?.commission ?? 12;
 
-  const itemsRaw =
-    order?.items && order.items.length > 0
-      ? order.items
-      : [{ name: 'Chicken Biryani', quantity: 1, price: 200.0 }];
+  let itemsRaw = [];
+  if (Array.isArray(order?.items) && order.items.length > 0) {
+    itemsRaw = order.items;
+  } else if (typeof order?.items === 'string') {
+    try {
+      const parsed = JSON.parse(order.items);
+      if (Array.isArray(parsed) && parsed.length > 0) itemsRaw = parsed;
+    } catch (e) {}
+  }
+  if (itemsRaw.length === 0) {
+    itemsRaw = [{ name: 'Chicken Biryani', quantity: 1, price: 200.0 }];
+  }
 
   const itemsList = itemsRaw.map((it) => {
     const rawPrice = it.originalPrice ?? it.price ?? 200.0;

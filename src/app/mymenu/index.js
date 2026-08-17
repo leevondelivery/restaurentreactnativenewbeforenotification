@@ -1,22 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import { updateMenuItemStatus as apiUpdateMenuItemStatus, fetchMenu } from '@/services/api';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
+  BackHandler,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
-  TouchableOpacity,
+  StyleSheet,
+  Text,
   TextInput,
-  Switch,
-  ActivityIndicator,
-  BackHandler,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
-import { fetchMenu, updateMenuItemStatus as apiUpdateMenuItemStatus } from '@/services/api';
 
 import CustomLoader from '@/components/CustomLoader';
 import './mymenu.css';
@@ -232,7 +230,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
-    marginTop: 4,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 8 : 12,
     position: 'relative',
     height: 48,
   },

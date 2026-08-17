@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -13,7 +13,7 @@ import {
   BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Print from 'expo-print';
 
 import CustomLoader from '@/components/CustomLoader';
@@ -23,6 +23,13 @@ import './orders.css';
 
 export const getDisplayOrderId = (order) => {
   if (!order) return '';
+  if (typeof order !== 'object') {
+    const str = String(order).trim();
+    if (/^[0-9a-fA-F]{24}$/.test(str)) {
+      return `#ORD-${str.slice(-6).toUpperCase()}`;
+    }
+    return str;
+  }
 
   const userIdStr = order.userId ? String(order.userId).trim() : '';
 
@@ -42,6 +49,12 @@ export const getDisplayOrderId = (order) => {
       if (!str) continue;
       // Skip if value equals userId
       if (userIdStr && str === userIdStr && order._id && String(order._id).trim() !== userIdStr) continue;
+
+      // If ID is a 24-character hex MongoDB ObjectId (e.g. test orders missing short orderId)
+      if (/^[0-9a-fA-F]{24}$/.test(str)) {
+        return `#ORD-${str.slice(-6).toUpperCase()}`;
+      }
+
       return str;
     }
   }
@@ -113,8 +126,8 @@ function PrepTimerBadge({ order }) {
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { orders, loading, fetchGlobalOrders, restaurantInfo } = useOrders();
-  const safeOrders = Array.isArray(orders) ? orders : [];
+  const { acceptedByRestaurantsOrders, trackerOrders, loading, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const safeOrders = Array.isArray(acceptedByRestaurantsOrders) ? acceptedByRestaurantsOrders : Array.isArray(trackerOrders) ? trackerOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [expandedAccordionMap, setExpandedAccordionMap] = useState({});
 
@@ -122,15 +135,17 @@ export default function OrdersScreen() {
   const [selectedInvoiceOrder, setSelectedInvoiceOrder] = useState(null);
   const [invoiceModalVisible, setInvoiceModalVisible] = useState(false);
 
-  // 5-Second Background Polling Loop for accepted orders
-  useEffect(() => {
-    fetchGlobalOrders(true);
-    const pollingInterval = setInterval(() => {
+  // 5-Second Background Polling Loop when Orders screen is in focus
+  useFocusEffect(
+    useCallback(() => {
       fetchGlobalOrders(true);
-    }, 5000);
+      const pollingInterval = setInterval(() => {
+        fetchGlobalOrders(true);
+      }, 5000);
 
-    return () => clearInterval(pollingInterval);
-  }, [fetchGlobalOrders]);
+      return () => clearInterval(pollingInterval);
+    }, [fetchGlobalOrders])
+  );
 
   // Android Back Button Interception
   useEffect(() => {
@@ -180,6 +195,7 @@ export default function OrdersScreen() {
   };
 
   const generateInvoiceHtml = (order) => {
+    if (!order || typeof order !== 'object') return '';
     const restName = order.restaurantName || restaurantInfo?.name || 'Amigoo Noshery';
     const restAddress = restaurantInfo?.address || 'Nandyal Road, Kurnool';
     const fssaiNum = restaurantInfo?.fssai || '12345678901234';
@@ -189,26 +205,40 @@ export default function OrdersScreen() {
       ? new Date(order.acceptedAt).toLocaleString()
       : new Date().toLocaleString();
 
-    const commRate = order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12;
-    const itemsRaw = order.items && order.items.length > 0 ? order.items : [];
+    const commRate = Number(order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12) || 12;
+
+    let itemsRaw = [];
+    if (Array.isArray(order.items)) {
+      itemsRaw = order.items;
+    } else if (typeof order.items === 'string') {
+      try {
+        const parsed = JSON.parse(order.items);
+        if (Array.isArray(parsed)) itemsRaw = parsed;
+      } catch (e) {}
+    }
 
     const itemsList = itemsRaw.map((it) => {
-      const rawPrice = it.originalPrice ?? it.price ?? 0;
+      if (!it || typeof it !== 'object') {
+        return { name: String(it || 'Item'), quantity: 1, price: 0 };
+      }
+      const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
       const discountedPrice =
-        it.priceAfterCommission ?? rawPrice * (1 - commRate / 100);
+        it.priceAfterCommission !== undefined
+          ? Number(it.priceAfterCommission) || 0
+          : rawPrice * (1 - commRate / 100);
       return {
         name: it.name || 'Item',
-        quantity: it.quantity || 1,
+        quantity: Number(it.quantity || it.qty || 1) || 1,
         price: discountedPrice,
       };
     });
 
     const calculatedNetTotal = itemsList.reduce(
-      (acc, it) => acc + it.price * it.quantity,
+      (acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 1),
       0
     );
 
-    const netTotal = order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetTotal;
+    const netTotal = Number(order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetTotal) || calculatedNetTotal;
 
     return `
       <!DOCTYPE html>
@@ -267,14 +297,14 @@ export default function OrdersScreen() {
                 <tr>
                   <td>${item.name}</td>
                   <td class="center">${item.quantity}</td>
-                  <td class="right">₹${Number(item.price * item.quantity).toFixed(2)}</td>
+                  <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
                 </tr>
               `
                 )
                 .join('')}
               <tr class="total-row">
                 <td colspan="2" class="bold">TOTAL (Net After ${commRate}% Comm)</td>
-                <td class="right bold">₹${Number(netTotal).toFixed(2)}</td>
+                <td class="right bold">₹${(Number(netTotal) || 0).toFixed(2)}</td>
               </tr>
             </tbody>
           </table>
@@ -333,6 +363,11 @@ export default function OrdersScreen() {
           <View style={styles.topHeaderPill}>
             <Ionicons name="document-text" size={20} color="#111111" />
             <Text style={styles.topHeaderText}>Accepted Orders</Text>
+            {safeOrders.length > 0 && (
+              <View style={styles.countBadgeHighlight}>
+                <Text style={styles.countBadgeHighlightText}>{safeOrders.length}</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -364,34 +399,58 @@ export default function OrdersScreen() {
         )}
 
         {safeOrders.map((order, orderIdx) => {
-          if (!order) return null;
-          const orderIdVal = getDisplayOrderId(order);
-          const formattedDate = order.acceptedAt
-            ? new Date(order.acceptedAt).toLocaleString('en-US', {
-                month: 'numeric',
-                day: 'numeric',
-                year: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              })
-            : new Date().toLocaleString();
+          if (!order || typeof order !== 'object') return null;
+          const orderIdVal = getDisplayOrderId(order) || `ORD-${orderIdx + 1}`;
+          
+          let formattedDate = new Date().toLocaleString();
+          if (order.acceptedAt) {
+            try {
+              const d = new Date(order.acceptedAt);
+              if (!isNaN(d.getTime())) {
+                formattedDate = d.toLocaleString('en-US', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                });
+              }
+            } catch (e) {}
+          }
 
           const commRate = Number(
             order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12
-          );
+          ) || 12;
 
-          const itemsRaw = order.items && order.items.length > 0 ? order.items : [];
+          let itemsRaw = [];
+          if (Array.isArray(order.items)) {
+            itemsRaw = order.items;
+          } else if (typeof order.items === 'string') {
+            try {
+              const parsed = JSON.parse(order.items);
+              if (Array.isArray(parsed)) itemsRaw = parsed;
+            } catch (e) {}
+          }
 
           const itemsList = itemsRaw.map((it) => {
-            const rawPrice = Number(it.originalPrice ?? it.price ?? 0);
+            if (!it || typeof it !== 'object') {
+              return {
+                name: String(it || 'Item'),
+                rawPrice: 0,
+                discountedPrice: 0,
+                qty: 1,
+              };
+            }
+            const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
             const discountedPrice =
               it.priceAfterCommission !== undefined
-                ? Number(it.priceAfterCommission)
+                ? Number(it.priceAfterCommission) || 0
                 : rawPrice * (1 - commRate / 100);
-            const qty = Number(it.quantity || it.qty || 1);
+            const qty = Number(it.quantity || it.qty || 1) || 1;
             return {
               ...it,
+              name: it.name || 'Item',
               rawPrice,
               discountedPrice,
               qty,
@@ -399,21 +458,22 @@ export default function OrdersScreen() {
           });
 
           const totalDistinctItems = itemsList.length;
-          const totalQtySum = itemsList.reduce((acc, it) => acc + it.qty, 0);
+          const totalQtySum = itemsList.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
 
           const calculatedNetEarnings = itemsList.reduce(
-            (acc, it) => acc + it.discountedPrice * it.qty,
+            (acc, it) => acc + (Number(it.discountedPrice) || 0) * (Number(it.qty) || 1),
             0
           );
 
           const finalTotalPrice = Number(
             order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetEarnings
-          );
+          ) || calculatedNetEarnings;
 
-          const isExpanded = !!expandedAccordionMap[order._id || orderIdVal];
+          const orderKey = String(order._id || orderIdVal || `ord-${orderIdx}`);
+          const isExpanded = !!expandedAccordionMap[orderKey];
 
           return (
-            <View key={order._id || orderIdVal} style={styles.orderOuterCard}>
+            <View key={orderKey} style={styles.orderOuterCard}>
               {/* Card Title & Date Header */}
               <View style={styles.orderHeaderSection}>
                 <Text style={styles.orderIdMainTitle}>ORDER ID : {orderIdVal}</Text>
@@ -443,7 +503,7 @@ export default function OrdersScreen() {
                     {/* Strikethrough Raw Price & Red Commission Badge */}
                     <View style={styles.strikethroughRow}>
                       <Text style={styles.strikethroughPriceText}>
-                        ₹{item.rawPrice}
+                        ₹{(Number(item.rawPrice) || 0).toFixed(2)}
                       </Text>
                       <Text style={styles.commissionBadgeText}>
                         -{commRate}%
@@ -451,7 +511,7 @@ export default function OrdersScreen() {
                     </View>
                     {/* Net Price After Commission */}
                     <Text style={styles.finalNetPriceText}>
-                      ₹{Number(item.discountedPrice).toFixed(2)}
+                      ₹{(Number(item.discountedPrice) || 0).toFixed(2)}
                     </Text>
                   </View>
                 </View>
@@ -474,7 +534,7 @@ export default function OrdersScreen() {
                 <View style={[styles.totalCol, { alignItems: 'flex-end' }]}>
                   <Text style={styles.totalColLabel}>Total Price</Text>
                   <Text style={styles.totalPriceMainVal}>
-                    ₹{finalTotalPrice.toFixed(2)}
+                    ₹{(Number(finalTotalPrice) || 0).toFixed(2)}
                   </Text>
                 </View>
               </View>
@@ -645,6 +705,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#111111',
+  },
+  countBadgeHighlight: {
+    backgroundColor: '#0AB28D',
+    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    marginLeft: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  countBadgeHighlightText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   emptyContainer: {
     flex: 1,

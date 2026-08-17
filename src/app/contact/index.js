@@ -31,6 +31,8 @@ export default function ContactUsScreen() {
     Linking.openURL('mailto:support@leevondelivery.in');
   };
 
+  const isNavigatingRef = React.useRef(false);
+
   const handleBack = () => {
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
