@@ -162,7 +162,7 @@ export default function MyMenuScreen() {
           <CustomLoader
             visible={loading}
             title="Loading Menu..."
-            subtitle="Fetching menu items from restaurant database"
+            subtitle={null}
           />
         ) : filteredItems.length === 0 ? (
           /* Empty State Beige Card */

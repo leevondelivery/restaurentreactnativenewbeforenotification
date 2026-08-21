@@ -1,9 +1,26 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import firebase from '@react-native-firebase/app';
 import messaging from '@react-native-firebase/messaging';
-import notifee, { AndroidImportance, AndroidVisibility } from '@notifee/react-native';
+import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notifee/react-native';
 import { registerFCMToken } from '@/services/api';
 import { playOrderSound, stopOrderSoundNative } from './soundService';
+
+// Foreground and Background Notifee event listeners to stop sound immediately when notification is touched, pressed, or dismissed/swiped away
+notifee.onForegroundEvent(async ({ type, detail }) => {
+  const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
+  if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
+    console.log(`[Notifee Foreground] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
+    await stopOrderNotificationSound(orderId);
+  }
+});
+
+notifee.onBackgroundEvent(async ({ type, detail }) => {
+  const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
+  if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
+    console.log(`[Notifee Background] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
+    await stopOrderNotificationSound(orderId);
+  }
+});
 
 // Safe check to guarantee default Firebase App is initialized
 if (!firebase.apps || firebase.apps.length === 0) {
@@ -23,7 +40,7 @@ export const extractRestId = (obj) => {
   return '';
 };
 
-const ORDER_CHANNEL_ID = 'order_incoming_channel_v3';
+const ORDER_CHANNEL_ID = 'order_incoming_channel_v5';
 const activeRepeatTimers = new Map();
 const notifiedOrderIds = new Set();
 
@@ -94,7 +111,6 @@ async function showSingleNotification(orderData, isForeground = false) {
     await notifee.displayNotification({
       id: notificationId,
       title: orderData?.title || '🔔 NEW ORDER RECEIVED!',
-      body: orderData?.body || `Order #${orderId} - Total Amount: ₹${amount}`,
       data: safeData,
       android: {
         channelId: ORDER_CHANNEL_ID,
@@ -105,7 +121,7 @@ async function showSingleNotification(orderData, isForeground = false) {
         ongoing: true,
         autoCancel: true,
         visibility: AndroidVisibility.PUBLIC,
-        smallIcon: 'ic_stat_notification',
+        smallIcon: 'ic_notification',
         color: '#000000',
         pressAction: {
           id: 'default',
@@ -275,6 +291,35 @@ export async function initFCMToken(userParam) {
     });
   } catch (err) {
     console.error('[FCM] Error initializing FCM token:', err);
+  }
+}
+
+export async function clearFCMTokenOnLogout(userParam) {
+  try {
+    let userObj = userParam;
+    if (!userObj) {
+      const stored = await AsyncStorage.getItem('userData');
+      if (stored) userObj = JSON.parse(stored);
+    }
+
+    const userId = userObj?._id || userObj?.id || '';
+    const restId = userObj?.restId || userObj?.restaurantId || userObj?.restaurant_id || '';
+    const phone = userObj?.phone || userObj?.mobileNumber || '';
+    const email = userObj?.email || '';
+
+    if (userId || restId || phone || email) {
+      await registerFCMToken({
+        restaurantId: restId,
+        restId,
+        userId,
+        phone,
+        email,
+        fcmToken: '',
+      });
+      console.log('[FCM] Cleared fcmToken in MongoDB backend on logout.');
+    }
+  } catch (err) {
+    console.error('Error clearing fcmToken on logout:', err);
   }
 }
 

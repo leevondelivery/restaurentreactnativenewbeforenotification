@@ -8,3 +8,4 @@ export const setupNotificationChannel = async () => {};
 export const initFCMToken = async () => {};
 export const markOrderAsNotified = () => {};
 export const isOrderNotified = () => false;
+export const clearFCMTokenOnLogout = async () => {};

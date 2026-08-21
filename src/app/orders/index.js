@@ -1,25 +1,49 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import * as Print from 'expo-print';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
+  BackHandler,
+  Modal,
+  Platform,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
+  StyleSheet,
+  Text,
   TouchableOpacity,
-  RefreshControl,
-  Modal,
-  Platform,
-  BackHandler,
+  View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
-import * as Print from 'expo-print';
 
 import CustomLoader from '@/components/CustomLoader';
 import { useOrders } from '@/context/OrdersContext';
 
 import './orders.css';
+
+export const getEffectiveCommissionRate = (orderObj, restCommission) => {
+  // 1. Check logged-in restaurant user's commission rate from DB profile (e.g. 5%)
+  const userRestRate = Number(restCommission) || 0;
+  if (userRestRate > 0) return userRestRate;
+
+  // 2. Check direct explicit commission rate on order document in DB
+  if (orderObj && typeof orderObj === 'object') {
+    const orderRate = Number(
+      orderObj.commissionRate ??
+      orderObj.commission ??
+      orderObj.commission_rate ??
+      orderObj.commissionPercent ??
+      orderObj.commission_percent ??
+      orderObj.commissionPercentage ??
+      orderObj.commission_percentage ??
+      0
+    );
+    if (orderRate > 0) return orderRate;
+  }
+
+  // 3. Fallback default for restaurant account
+  return 5;
+};
 
 export const getDisplayOrderId = (order) => {
   if (!order) return '';
@@ -62,72 +86,57 @@ export const getDisplayOrderId = (order) => {
   return '';
 };
 
-// Live Preparation Countdown Badge Component
-function PrepTimerBadge({ order }) {
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const targetEndTimeRef = useRef(0);
-
-  useEffect(() => {
-    if (!order) return;
-    const acceptedAtMs = order?.acceptedAt
-      ? new Date(order.acceptedAt).getTime()
-      : Date.now();
-
-    const prepMins = order?.preparationTime || 15;
-    const estimatedPrepEndTimeMs = order?.estimatedPrepEndTime
-      ? new Date(order.estimatedPrepEndTime).getTime()
-      : acceptedAtMs + prepMins * 60000;
-
-    const totalDuration = estimatedPrepEndTimeMs - acceptedAtMs;
-    const elapsedOnServer = Date.now() - acceptedAtMs;
-    const initialRemainingSecs = Math.max(
-      0,
-      Math.floor((totalDuration - elapsedOnServer) / 1000)
-    );
-
-    targetEndTimeRef.current = Date.now() + initialRemainingSecs * 1000;
-    setSecondsLeft(initialRemainingSecs);
-
-    const intervalId = setInterval(() => {
-      const remaining = Math.floor((targetEndTimeRef.current - Date.now()) / 1000);
-      if (remaining <= 0) {
-        setSecondsLeft(0);
-        clearInterval(intervalId);
-      } else {
-        setSecondsLeft(remaining);
-      }
-    }, 1000);
-
-    return () => clearInterval(intervalId);
-  }, [order?.acceptedAt, order?.estimatedPrepEndTime, order?.preparationTime]);
-
-  if (!order) return null;
-
-  if (secondsLeft <= 0) {
-    return (
-      <View style={styles.saviorBadge}>
-        <Ionicons name="bicycle" size={16} color="#FFFFFF" />
-        <Text style={styles.saviorBadgeText}>Savior At Door</Text>
-      </View>
-    );
+const getSafeAddress = (obj, fallbackAddr = '') => {
+  if (!obj || typeof obj !== 'object') {
+    return typeof fallbackAddr === 'string' ? fallbackAddr.trim() : '';
   }
+  const candidates = [
+    obj.restaurantAddress,
+    obj.restAddress,
+    obj.address,
+    obj.restLocation,
+    obj.restaurantLocation,
+    obj.location,
+    fallbackAddr,
+  ];
 
-  const mins = Math.floor(secondsLeft / 60);
-  const secs = secondsLeft % 60;
-  const formattedTime = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim().length > 0) {
+      return c.trim();
+    }
+  }
+  return typeof fallbackAddr === 'string' ? fallbackAddr.trim() : '';
+};
 
-  return (
-    <View style={styles.prepBadge}>
-      <Ionicons name="time-outline" size={16} color="#E05638" />
-      <Text style={styles.prepBadgeText}>Prep: {formattedTime}</Text>
-    </View>
-  );
-}
+const getSafePhone = (obj, fallbackPh = '') => {
+  if (!obj || typeof obj !== 'object') {
+    return typeof fallbackPh === 'string' ? fallbackPh.trim() : (typeof fallbackPh === 'number' ? String(fallbackPh) : '');
+  }
+  const candidates = [
+    obj.restaurantPhone,
+    obj.phone,
+    obj.mobileNumber,
+    obj.mobile,
+    obj.contactNumber,
+    obj.restaurantMobile,
+    fallbackPh,
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim().length > 0) {
+      return c.trim();
+    }
+    if (typeof c === 'number') {
+      return String(c);
+    }
+  }
+  return typeof fallbackPh === 'string' ? fallbackPh.trim() : (typeof fallbackPh === 'number' ? String(fallbackPh) : '');
+};
 
 export default function OrdersScreen() {
   const router = useRouter();
   // Fetch data strictly from 'acceptedbyrestaurent' collection via OrdersContext
-  const { acceptedByRestaurantsOrders, loading, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const { acceptedByRestaurantsOrders, loading, fetchGlobalOrders, restaurantInfo, markOrderAsReady } = useOrders();
   const safeOrders = Array.isArray(acceptedByRestaurantsOrders) ? acceptedByRestaurantsOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [expandedAccordionMap, setExpandedAccordionMap] = useState({});
@@ -171,7 +180,7 @@ export default function OrdersScreen() {
     setRefreshing(true);
     try {
       await fetchGlobalOrders(false);
-    } catch (e) {}
+    } catch (e) { }
     setRefreshing(false);
   };
 
@@ -197,16 +206,17 @@ export default function OrdersScreen() {
 
   const generateInvoiceHtml = (order) => {
     if (!order || typeof order !== 'object') return '';
-    const restName = order.restaurantName || restaurantInfo?.name || 'Amigoo Noshery';
-    const restAddress = restaurantInfo?.address || 'Nandyal Road, Kurnool';
-    const fssaiNum = restaurantInfo?.fssai || '12345678901234';
+    const restName = order.restaurantName || restaurantInfo?.name || '';
+    const restAddress = getSafeAddress(order, restaurantInfo?.address);
+    const restGstin = order.gstin || restaurantInfo?.gstin || '37AANFL1602Q1ZW';
+    const restPhone = getSafePhone(order, restaurantInfo?.phone);
     const orderIdVal = getDisplayOrderId(order);
 
-    const dateStr = order.acceptedAt
-      ? new Date(order.acceptedAt).toLocaleString()
-      : new Date().toLocaleString();
-
-    const commRate = Number(order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12) || 12;
+    const rawDate = order.acceptedAt || order.createdAt || order.orderDate;
+    const dateObj = rawDate ? new Date(rawDate) : new Date();
+    const dateStr = !isNaN(dateObj.getTime())
+      ? dateObj.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      : new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
     let itemsRaw = [];
     if (Array.isArray(order.items)) {
@@ -215,7 +225,7 @@ export default function OrdersScreen() {
       try {
         const parsed = JSON.parse(order.items);
         if (Array.isArray(parsed)) itemsRaw = parsed;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const itemsList = itemsRaw.map((it) => {
@@ -223,102 +233,215 @@ export default function OrdersScreen() {
         return { name: String(it || 'Item'), quantity: 1, price: 0 };
       }
       const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
-      const discountedPrice =
-        it.priceAfterCommission !== undefined
-          ? Number(it.priceAfterCommission) || 0
-          : rawPrice * (1 - commRate / 100);
       return {
         name: it.name || 'Item',
         quantity: Number(it.quantity || it.qty || 1) || 1,
-        price: discountedPrice,
+        price: rawPrice,
       };
     });
 
-    const calculatedNetTotal = itemsList.reduce(
+    const itemsSubtotal = itemsList.reduce(
       (acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 1),
       0
     );
 
-    const netTotal = Number(order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetTotal) || calculatedNetTotal;
+    const commRate = getEffectiveCommissionRate(order, restaurantInfo?.commission);
+
+    const calculatedNetEarnings = itemsList.reduce(
+      (acc, it) => {
+        const rp = Number(it.price) || 0;
+        const disc = it.priceAfterCommission !== undefined
+          ? Number(it.priceAfterCommission) || 0
+          : (commRate > 0 ? rp * (1 - commRate / 100) : rp);
+        return acc + disc * (Number(it.quantity) || 1);
+      },
+      0
+    );
+
+    const finalTotalPrice = calculatedNetEarnings > 0
+      ? calculatedNetEarnings
+      : (commRate > 0
+          ? itemsSubtotal * (1 - commRate / 100)
+          : (Number(order.totalPriceAfterCommission ?? order.netEarnings ?? itemsSubtotal) || itemsSubtotal));
+
+    const rawCommAmount = Number(
+      order.commissionAmount ?? order.totalCommissionCut ?? (itemsSubtotal - finalTotalPrice)
+    );
+
+    const commissionAmountVal = commRate > 0
+      ? Number((itemsSubtotal * (commRate / 100)).toFixed(2))
+      : Number((rawCommAmount > 0 ? rawCommAmount : Math.max(0, itemsSubtotal - finalTotalPrice)).toFixed(2));
+
+    const grandTotalVal = Number(finalTotalPrice.toFixed(2));
 
     return `
       <!DOCTYPE html>
       <html>
         <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
-          <title>Receipt - ${orderIdVal}</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+          <title></title>
           <style>
             @page {
               size: auto;
-              margin: 0;
+              margin: 0mm !important;
             }
-            body {
-              font-family: 'Courier New', Courier, monospace;
-              padding: 24px;
-              color: #111111;
+            @media print {
+              @page {
+                margin: 0mm !important;
+              }
+              html, body {
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #ffffff !important;
+              }
+              tr, td, th {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+            }
+            * {
+              box-sizing: border-box;
+            }
+            html, body {
+              width: 100%;
+              margin: 0;
+              padding: 0;
               background-color: #ffffff;
-              max-width: 420px;
+              color: #000000;
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 11px;
+              line-height: 1.3;
+            }
+            .receipt-wrapper {
+              width: 100%;
+              max-width: 280px;
               margin: 0 auto;
+              padding: 8px 4px 24px 4px;
             }
             .center { text-align: center; }
             .bold { font-weight: bold; }
-            .divider { text-align: center; margin: 10px 0; color: #888888; letter-spacing: 1px; }
-            table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-            th, td { font-family: 'Courier New', Courier, monospace; padding: 6px 0; font-size: 13px; }
-            th { text-align: left; font-weight: bold; }
-            .right { text-align: right; font-weight: bold; }
-            .total-row td { border-top: 1px dashed #444; border-bottom: 1px dashed #444; font-size: 15px; padding: 8px 0; }
-            .footer { margin-top: 18px; font-size: 11px; color: #666; }
+            .divider {
+              text-align: center;
+              margin: 6px 0;
+              color: #444444;
+              letter-spacing: -0.5px;
+              white-space: nowrap;
+              overflow: hidden;
+            }
+            table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+            th, td {
+              font-family: 'Courier New', Courier, monospace;
+              padding: 3px 0;
+              font-size: 10px;
+              word-break: break-word;
+            }
+            th { text-align: left; font-weight: bold; border-bottom: 1px dashed #444444; }
+            .right { text-align: right; }
+            .center-col { text-align: center; }
+            .row-flex { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
+            .total-row { border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; font-size: 13px; font-weight: bold; padding: 6px 0; margin-top: 4px; display: flex; justify-content: space-between; }
+            .footer { margin-top: 12px; font-size: 11px; color: #000000; text-align: center; font-weight: bold; }
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size: 18px;">${restName}</div>
-          <div class="center" style="font-size: 12px; margin-top: 4px;">Address: ${restAddress}</div>
-          <div class="center" style="font-size: 12px;">FSSAI: ${fssaiNum}</div>
-          
-          <div class="divider">---------------------------------------------</div>
-          
-          <div style="font-size: 13px;"><strong>Order ID:</strong> ${orderIdVal}</div>
-          <div style="font-size: 13px;"><strong>Date:</strong> ${dateStr}</div>
-          
-          <div class="divider">---------------------------------------------</div>
-          
-          <table>
-            <thead>
-              <tr>
-                <th>ITEM</th>
-                <th class="center">QTY</th>
-                <th class="right">NET PRICE</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsList
-                .map(
-                  (item) => `
+          <div class="receipt-wrapper">
+            <!-- Block 1: Restaurant Info -->
+            <div class="center bold" style="font-size: 15px;">${restName}</div>
+            ${restAddress ? `<div class="center" style="font-size: 10px; margin-top: 2px;">Address: ${restAddress}</div>` : ''}
+            <div class="center" style="font-size: 10px;">The GSTIN : ${restGstin}</div>
+            ${restPhone ? `<div class="center" style="font-size: 10px;">Phone: ${restPhone}</div>` : ''}
+
+            <div class="divider">--------------------------------</div>
+
+            <!-- Block 2: Order & Delivery Info -->
+            <div style="font-size: 11px;"><strong>Order ID:</strong> ${orderIdVal}</div>
+            <div style="font-size: 11px;"><strong>Date:</strong> ${dateStr}</div>
+            <div class="bold" style="font-size: 12px; margin-top: 4px; margin-bottom: 2px;">From Leevon Delivery</div>
+
+            <div class="divider">--------------------------------</div>
+
+            <!-- Block 4: Items Table -->
+            <table>
+              <thead>
                 <tr>
-                  <td>${item.name}</td>
-                  <td class="center">${item.quantity}</td>
-                  <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
+                  <th style="width: 25px;">NO.</th>
+                  <th>ITEM</th>
+                  <th class="center-col">QTY</th>
+                  <th class="right">PRICE</th>
+                  <th class="right">AMOUNT</th>
                 </tr>
-              `
-                )
-                .join('')}
-              <tr class="total-row">
-                <td colspan="2" class="bold">TOTAL (Net After ${commRate}% Comm)</td>
-                <td class="right bold">₹${(Number(netTotal) || 0).toFixed(2)}</td>
-              </tr>
-            </tbody>
-          </table>
-          
-          <div class="divider">---------------------------------------------</div>
-          
-          <div class="center footer">
-            Thank you for ordering with us!<br/>
-            Have a pleasant meal!
+              </thead>
+              <tbody>
+                ${itemsList
+        .map(
+          (item, idx) => `
+                  <tr>
+                    <td>${idx + 1}</td>
+                    <td>${item.name}</td>
+                    <td class="center-col">${item.quantity}</td>
+                    <td class="right">₹${Number(item.price).toFixed(2)}</td>
+                    <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
+                  </tr>
+                `
+        )
+        .join('')}
+              </tbody>
+            </table>
+
+            <div class="divider">--------------------------------</div>
+
+            <!-- Block 5: Totals Breakdown -->
+            <div class="row-flex">
+              <span>Sub Total</span>
+              <span>₹${itemsSubtotal.toFixed(2)}</span>
+            </div>
+            <div class="row-flex">
+              <span>Commission</span>
+              <span>₹${commissionAmountVal.toFixed(2)}</span>
+            </div>
+
+            <div class="total-row">
+              <span>Net Receivable</span>
+              <span>₹${grandTotalVal.toFixed(2)}</span>
+            </div>
           </div>
         </body>
       </html>
     `;
+  };
+
+  const printHtmlOnWeb = (htmlContent) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow || iframe.contentDocument;
+      const iframeDoc = doc.document || doc;
+
+      iframeDoc.open();
+      iframeDoc.write(htmlContent);
+      iframeDoc.close();
+
+      setTimeout(() => {
+        if (doc.focus) doc.focus();
+        if (doc.print) doc.print();
+        setTimeout(() => {
+          if (iframe.parentNode) {
+            iframe.parentNode.removeChild(iframe);
+          }
+        }, 1000);
+      }, 300);
+    } catch (err) {
+      console.error('Error printing on web via iframe:', err);
+    }
   };
 
   const handlePrintReceipt = async (order) => {
@@ -326,7 +449,7 @@ export default function OrdersScreen() {
       const html = generateInvoiceHtml(order);
 
       if (Platform.OS === 'web') {
-        await Print.printAsync({ html });
+        printHtmlOnWeb(html);
       } else {
         const { uri } = await Print.printToFileAsync({ html });
         await Print.printAsync({ uri });
@@ -402,7 +525,7 @@ export default function OrdersScreen() {
         {safeOrders.map((order, orderIdx) => {
           if (!order || typeof order !== 'object') return null;
           const orderIdVal = getDisplayOrderId(order) || `ORD-${orderIdx + 1}`;
-          
+
           let formattedDate = new Date().toLocaleString();
           if (order.acceptedAt) {
             try {
@@ -417,12 +540,10 @@ export default function OrdersScreen() {
                   hour12: true,
                 });
               }
-            } catch (e) {}
+            } catch (e) { }
           }
 
-          const commRate = Number(
-            order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12
-          ) || 12;
+          const commRate = getEffectiveCommissionRate(order, restaurantInfo?.commission);
 
           let itemsRaw = [];
           if (Array.isArray(order.items)) {
@@ -431,7 +552,7 @@ export default function OrdersScreen() {
             try {
               const parsed = JSON.parse(order.items);
               if (Array.isArray(parsed)) itemsRaw = parsed;
-            } catch (e) {}
+            } catch (e) { }
           }
 
           const itemsList = itemsRaw.map((it) => {
@@ -447,7 +568,7 @@ export default function OrdersScreen() {
             const discountedPrice =
               it.priceAfterCommission !== undefined
                 ? Number(it.priceAfterCommission) || 0
-                : rawPrice * (1 - commRate / 100);
+                : (commRate > 0 ? rawPrice * (1 - commRate / 100) : rawPrice);
             const qty = Number(it.quantity || it.qty || 1) || 1;
             return {
               ...it,
@@ -461,14 +582,30 @@ export default function OrdersScreen() {
           const totalDistinctItems = itemsList.length;
           const totalQtySum = itemsList.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
 
+          const itemsSubtotal = itemsList.reduce(
+            (acc, it) => acc + (Number(it.rawPrice) || 0) * (Number(it.qty) || 1),
+            0
+          );
+
+          const grossOrderTotal = Number(
+            order.totalPrice ?? order.grossTotal ?? order.subtotal ?? itemsSubtotal
+          ) || itemsSubtotal;
+
           const calculatedNetEarnings = itemsList.reduce(
             (acc, it) => acc + (Number(it.discountedPrice) || 0) * (Number(it.qty) || 1),
             0
           );
 
-          const finalTotalPrice = Number(
-            order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetEarnings
-          ) || calculatedNetEarnings;
+          const finalTotalPrice = calculatedNetEarnings > 0
+            ? calculatedNetEarnings
+            : (commRate > 0
+                ? grossOrderTotal * (1 - commRate / 100)
+                : (Number(order.totalPriceAfterCommission ?? order.netEarnings ?? grossOrderTotal) || grossOrderTotal));
+
+          // Commission amount calculated directly from DB commission percentage rate
+          const commissionAmountVal = commRate > 0
+            ? Number((grossOrderTotal * (commRate / 100)).toFixed(2))
+            : Number((order.commissionAmount ?? Math.max(0, grossOrderTotal - finalTotalPrice)).toFixed(2));
 
           const orderKey = String(order._id || orderIdVal || `ord-${orderIdx}`);
           const isExpanded = !!expandedAccordionMap[orderKey];
@@ -507,7 +644,7 @@ export default function OrdersScreen() {
                         ₹{(Number(item.rawPrice) || 0).toFixed(2)}
                       </Text>
                       <Text style={styles.commissionBadgeText}>
-                        -{commRate}%
+                        {commRate}%
                       </Text>
                     </View>
                     {/* Net Price After Commission */}
@@ -532,6 +669,13 @@ export default function OrdersScreen() {
                   <Text style={styles.totalColVal}>{totalQtySum}</Text>
                 </View>
 
+                <View style={styles.totalCol}>
+                  <Text style={styles.totalColLabel}>Commission</Text>
+                  <Text style={styles.totalColVal}>
+                    ₹{commissionAmountVal.toFixed(2)}
+                  </Text>
+                </View>
+
                 <View style={[styles.totalCol, { alignItems: 'flex-end' }]}>
                   <Text style={styles.totalColLabel}>Total Price</Text>
                   <Text style={styles.totalPriceMainVal}>
@@ -544,7 +688,7 @@ export default function OrdersScreen() {
               <View style={styles.cardBottomActionRow}>
                 <TouchableOpacity
                   style={styles.printInvoiceCapsuleButton}
-                  onPress={() => handlePrintReceipt(order)}
+                  onPress={() => handleOpenInvoiceModal(order)}
                   activeOpacity={0.8}
                 >
                   <Ionicons name="print" size={18} color="#FFFFFF" />
@@ -577,64 +721,173 @@ export default function OrdersScreen() {
                 }}
                 activeOpacity={0.7}
               >
-                <Ionicons name="close" size={20} color="#111111" />
+                <Ionicons name="close" size={20} color="#333333" />
               </TouchableOpacity>
 
               <ScrollView style={styles.receiptPaperCard} showsVerticalScrollIndicator={false}>
+                {/* Block 1: Restaurant Info */}
                 <View style={styles.restaurantHeaderSection}>
                   <Text style={styles.restaurantNameText}>
-                    🍽️ {selectedInvoiceOrder.restaurantName || restaurantInfo.name || 'Amigoo Noshery'}
+                    {selectedInvoiceOrder.restaurantName || restaurantInfo?.name || ''}
                   </Text>
+                  {getSafeAddress(selectedInvoiceOrder, restaurantInfo?.address) ? (
+                    <Text style={styles.restaurantSubText}>
+                      Address: {getSafeAddress(selectedInvoiceOrder, restaurantInfo?.address)}
+                    </Text>
+                  ) : null}
                   <Text style={styles.restaurantSubText}>
-                    Address: {restaurantInfo.address}
+                    The GSTIN : {selectedInvoiceOrder.gstin || restaurantInfo?.gstin || '37AANFL1602Q1ZW'}
                   </Text>
-                  <Text style={styles.restaurantSubText}>
-                    FSSAI: {restaurantInfo.fssai}
+                  {getSafePhone(selectedInvoiceOrder, restaurantInfo?.phone) ? (
+                    <Text style={styles.restaurantSubText}>
+                      Phone: {getSafePhone(selectedInvoiceOrder, restaurantInfo?.phone)}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+
+                {/* Block 2: Order & Delivery Info */}
+                <View style={styles.receiptOrderInfoSection}>
+                  <Text style={styles.receiptOrderText}>
+                    Order ID: {getDisplayOrderId(selectedInvoiceOrder)}
+                  </Text>
+                  <Text style={styles.receiptOrderText}>
+                    Date: {(() => {
+                      const rawD = selectedInvoiceOrder.acceptedAt || selectedInvoiceOrder.createdAt || selectedInvoiceOrder.orderDate;
+                      const dObj = rawD ? new Date(rawD) : new Date();
+                      return !isNaN(dObj.getTime())
+                        ? dObj.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+                        : new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    })()}
+                  </Text>
+                  <Text style={[styles.receiptOrderText, { fontWeight: 'bold', marginTop: 4, marginBottom: 2 }]}>
+                    From Leevon Delivery
                   </Text>
                 </View>
 
                 <Text style={styles.dashedDivider}>---------------------------------------------</Text>
 
-                <Text style={styles.receiptOrderText}>
-                  Order ID: {selectedInvoiceOrder.orderId || selectedInvoiceOrder._id}
-                </Text>
-                <Text style={styles.receiptOrderText}>
-                  Date: {selectedInvoiceOrder.acceptedAt ? new Date(selectedInvoiceOrder.acceptedAt).toLocaleString() : new Date().toLocaleString()}
-                </Text>
+                {/* Block 3: Items Table Column Headers */}
+                <View style={styles.receiptTableHeaderRow}>
+                  <Text style={[styles.receiptHeaderCol, { flex: 0.6 }]}>NO.</Text>
+                  <Text style={[styles.receiptHeaderCol, { flex: 2 }]}>ITEM</Text>
+                  <Text style={[styles.receiptHeaderCol, { flex: 0.8, textAlign: 'center' }]}>QTY</Text>
+                  <Text style={[styles.receiptHeaderCol, { flex: 1.2, textAlign: 'right' }]}>PRICE</Text>
+                  <Text style={[styles.receiptHeaderCol, { flex: 1.2, textAlign: 'right' }]}>AMOUNT</Text>
+                </View>
+
+                {(() => {
+                  let modalItems = [];
+                  if (Array.isArray(selectedInvoiceOrder.items)) {
+                    modalItems = selectedInvoiceOrder.items;
+                  } else if (typeof selectedInvoiceOrder.items === 'string') {
+                    try {
+                      const p = JSON.parse(selectedInvoiceOrder.items);
+                      if (Array.isArray(p)) modalItems = p;
+                    } catch (e) { }
+                  }
+                  if (modalItems.length === 0) {
+                    modalItems = [{ name: 'Item', quantity: 1, price: 0 }];
+                  }
+
+                  return modalItems.map((it, i) => {
+                    if (!it || typeof it !== 'object') {
+                      return (
+                        <View key={i} style={styles.receiptItemRow}>
+                          <Text style={[styles.receiptItemText, { flex: 0.6 }]}>{i + 1}</Text>
+                          <Text style={[styles.receiptItemText, { flex: 2 }]}>{String(it || 'Item')}</Text>
+                          <Text style={[styles.receiptItemText, { flex: 0.8, textAlign: 'center' }]}>1</Text>
+                          <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right' }]}>₹0.00</Text>
+                          <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right' }]}>₹0.00</Text>
+                        </View>
+                      );
+                    }
+                    const rawP = Number(it.originalPrice ?? it.price ?? 0) || 0;
+                    const qty = Number(it.quantity || it.qty || 1) || 1;
+                    const itemTotal = rawP * qty;
+
+                    return (
+                      <View key={i} style={styles.receiptItemRow}>
+                        <Text style={[styles.receiptItemText, { flex: 0.6 }]}>{i + 1}</Text>
+                        <Text style={[styles.receiptItemText, { flex: 2 }]}>{it.name || 'Item'}</Text>
+                        <Text style={[styles.receiptItemText, { flex: 0.8, textAlign: 'center' }]}>{qty}</Text>
+                        <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right' }]}>
+                          ₹{Number(rawP).toFixed(2)}
+                        </Text>
+                        <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right' }]}>
+                          ₹{Number(itemTotal).toFixed(2)}
+                        </Text>
+                      </View>
+                    );
+                  });
+                })()}
 
                 <Text style={styles.dashedDivider}>---------------------------------------------</Text>
 
-                {(selectedInvoiceOrder.items || []).map((it, i) => {
-                  const rawP = it.originalPrice ?? it.price ?? 0;
-                  const comm = selectedInvoiceOrder.commissionRate ?? restaurantInfo.commission ?? 12;
-                  const discP = it.priceAfterCommission ?? rawP * (1 - comm / 100);
-                  return (
-                    <View key={i} style={styles.receiptItemRow}>
-                      <Text style={[styles.receiptItemText, { flex: 2 }]}>{it.name}</Text>
-                      <Text style={[styles.receiptItemText, { flex: 1, textAlign: 'center' }]}>
-                        {it.quantity}
-                      </Text>
-                      <Text style={[styles.receiptItemText, { flex: 1, textAlign: 'right' }]}>
-                        ₹{Number(discP * (it.quantity || 1)).toFixed(2)}
-                      </Text>
-                    </View>
+                {/* Block 4: Totals Breakdown */}
+                {(() => {
+                  let modalItems = [];
+                  if (Array.isArray(selectedInvoiceOrder.items)) {
+                    modalItems = selectedInvoiceOrder.items;
+                  } else if (typeof selectedInvoiceOrder.items === 'string') {
+                    try {
+                      const p = JSON.parse(selectedInvoiceOrder.items);
+                      if (Array.isArray(p)) modalItems = p;
+                    } catch (e) { }
+                  }
+
+                  const itemsSubtotal = modalItems.reduce(
+                    (acc, it) => acc + (Number(it?.originalPrice ?? it?.price ?? 0) || 0) * (Number(it?.quantity || it?.qty || 1) || 1),
+                    0
                   );
-                })}
 
-                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+                  const commRate = getEffectiveCommissionRate(selectedInvoiceOrder, restaurantInfo?.commission);
 
-                <View style={styles.receiptTotalRow}>
-                  <Text style={styles.receiptTotalLabel}>TOTAL (Net):</Text>
-                  <Text style={styles.receiptTotalValue}>
-                    ₹{Number(selectedInvoiceOrder.totalPriceAfterCommission ?? selectedInvoiceOrder.netEarnings ?? 0).toFixed(2)}
-                  </Text>
-                </View>
+                  const calculatedNetEarnings = modalItems.reduce(
+                    (acc, it) => {
+                      const rp = Number(it?.originalPrice ?? it?.price ?? 0) || 0;
+                      const disc = it?.priceAfterCommission !== undefined
+                        ? Number(it.priceAfterCommission) || 0
+                        : (commRate > 0 ? rp * (1 - commRate / 100) : rp);
+                      return acc + disc * (Number(it?.quantity || it?.qty || 1) || 1);
+                    },
+                    0
+                  );
 
-                <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+                  const finalTotalPrice = Number(
+                    selectedInvoiceOrder.totalPriceAfterCommission ?? selectedInvoiceOrder.netEarnings ?? (commRate > 0 ? itemsSubtotal * (1 - commRate / 100) : calculatedNetEarnings)
+                  ) || calculatedNetEarnings;
 
-                <Text style={styles.receiptFooterText}>
-                  Thank you for ordering with us!
-                </Text>
+                  const rawCommAmount = Number(
+                    selectedInvoiceOrder.commissionAmount ?? selectedInvoiceOrder.totalCommissionCut ?? (itemsSubtotal - finalTotalPrice)
+                  );
+
+                  const commissionAmountVal = commRate > 0
+                    ? Number((itemsSubtotal * (commRate / 100)).toFixed(2))
+                    : Number((rawCommAmount > 0 ? rawCommAmount : Math.max(0, itemsSubtotal - finalTotalPrice)).toFixed(2));
+
+                  const grandTotalVal = Number(finalTotalPrice.toFixed(2));
+
+                  return (
+                    <>
+                      <View style={styles.receiptTotalRow}>
+                        <Text style={styles.receiptTotalLabel}>Sub Total</Text>
+                        <Text style={styles.receiptTotalValue}>₹{itemsSubtotal.toFixed(2)}</Text>
+                      </View>
+                      <View style={styles.receiptTotalRow}>
+                        <Text style={styles.receiptTotalLabel}>Commission</Text>
+                        <Text style={styles.receiptTotalValue}>₹{commissionAmountVal.toFixed(2)}</Text>
+                      </View>
+                      <Text style={styles.dashedDivider}>---------------------------------------------</Text>
+                      <View style={styles.receiptGrandTotalRow}>
+                        <Text style={styles.receiptGrandTotalLabel}>Net Receivable</Text>
+                        <Text style={styles.receiptGrandTotalVal}>₹{grandTotalVal.toFixed(2)}</Text>
+                      </View>
+                    </>
+                  );
+                })()}
+
               </ScrollView>
 
               <TouchableOpacity
@@ -645,7 +898,7 @@ export default function OrdersScreen() {
                 }}
                 activeOpacity={0.8}
               >
-                <Ionicons name="print" size={18} color="#FFFFFF" />
+                <Ionicons name="print" size={20} color="#FFFFFF" />
                 <Text style={styles.modalPrintButtonText}>Print Receipt</Text>
               </TouchableOpacity>
             </View>
@@ -957,10 +1210,26 @@ const styles = StyleSheet.create({
     color: '#888888',
     marginVertical: 8,
   },
-  receiptOrderText: {
-    fontSize: 13,
-    color: '#111111',
+  receiptOrderInfoSection: {
     marginBottom: 4,
+  },
+  receiptOrderText: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111111',
+  },
+  receiptTableHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 2,
+  },
+  receiptHeaderCol: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#111111',
   },
   receiptItemRow: {
     flexDirection: 'row',
@@ -968,6 +1237,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   receiptItemText: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     fontSize: 13,
     color: '#111111',
   },
@@ -978,14 +1248,47 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   receiptTotalLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     fontSize: 15,
     fontWeight: '700',
     color: '#111111',
   },
   receiptTotalValue: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
     fontSize: 16,
     fontWeight: '700',
     color: '#111111',
+  },
+  receiptGrandTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 6,
+  },
+  receiptGrandTotalLabel: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  receiptGrandTotalVal: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  receiptThankYouFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  receiptThankYouText: {
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#444444',
   },
   receiptFooterText: {
     textAlign: 'center',
@@ -1005,6 +1308,38 @@ const styles = StyleSheet.create({
   modalPrintButtonText: {
     color: '#FFFFFF',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  readyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#E6F7F3',
+    borderWidth: 1,
+    borderColor: '#0AB28D',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  readyBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0AB28D',
+  },
+  itemsReadyActionCapsuleButton: {
+    flex: 1,
+    height: 44,
+    backgroundColor: '#0AB28D',
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginRight: 8,
+  },
+  itemsReadyActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '700',
   },
 });

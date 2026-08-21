@@ -128,9 +128,10 @@ export default function BottomNavbar() {
     }
   };
 
-  const { incomingOrders, orders: globalOrders } = useOrders();
+  const { incomingOrders, acceptedOrders, orders: globalOrders } = useOrders();
   const incomingCount = Array.isArray(incomingOrders) ? incomingOrders.length : 0;
-  const acceptedCount = Array.isArray(globalOrders) ? globalOrders.length : 0;
+  const trackerList = Array.isArray(acceptedOrders) ? acceptedOrders : Array.isArray(globalOrders) ? globalOrders : [];
+  const trackerCount = trackerList.length;
 
   return (
     <View
@@ -146,7 +147,7 @@ export default function BottomNavbar() {
           const activeTabId = tabs[activeIndex]?.id;
           let activeBadgeCount = 0;
           if (activeTabId === 'notifications') activeBadgeCount = incomingCount;
-          if (activeTabId === 'tracker') activeBadgeCount = acceptedCount;
+          if (activeTabId === 'tracker') activeBadgeCount = trackerCount;
 
           return (
             <Animated.View
@@ -175,7 +176,7 @@ export default function BottomNavbar() {
         {tabs.map((tab, index) => {
           let badgeCount = 0;
           if (tab.id === 'notifications') badgeCount = incomingCount;
-          if (tab.id === 'tracker') badgeCount = acceptedCount;
+          if (tab.id === 'tracker') badgeCount = trackerCount;
 
           return (
             <TouchableOpacity
@@ -253,6 +254,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
   },
   badgeCircle: {
     position: 'absolute',

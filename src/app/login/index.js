@@ -1,33 +1,35 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { loginUser } from '@/services/api';
+import { initFCMToken } from '@/services/NotificationService';
+import { clearUser, setUser } from '@/store/userSlice';
+import { extractIsActive } from '@/utils/statusUtils';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import messaging from '@react-native-firebase/messaging';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
   StyleSheet,
-  View,
   Text,
   TextInput,
   TouchableOpacity,
-  Image,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StatusBar,
-  ActivityIndicator,
+  View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, useFocusEffect } from 'expo-router';
 import { useDispatch } from 'react-redux';
-import { setUser, clearUser } from '@/store/userSlice';
-import { loginUser } from '@/services/api';
-import { initFCMToken } from '@/services/NotificationService';
-import messaging from '@react-native-firebase/messaging';
-
+import { useOrders } from '@/context/OrdersContext';
 import CustomLoader from '@/components/CustomLoader';
 import './login.css';
 
 export default function LoginScreen() {
   const router = useRouter();
   const dispatch = useDispatch();
+  const { loadRestaurantInfo } = useOrders();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -140,7 +142,7 @@ export default function LoginScreen() {
       let currentFcmToken = '';
       try {
         currentFcmToken = (await messaging().getToken()) || '';
-      } catch (e) {}
+      } catch (e) { }
 
       const response = await loginUser(email.trim(), password.trim(), currentFcmToken);
       const data = await response.json();
@@ -156,6 +158,22 @@ export default function LoginScreen() {
           ''
         ).trim();
 
+        const rawComm =
+          data.user?.commission ??
+          data.user?.commissionRate ??
+          data.user?.commission_rate ??
+          data.user?.commissionPercent ??
+          data.user?.commission_percent ??
+          data.user?.commissionPercentage ??
+          data.restaurant?.commission ??
+          data.restaurant?.commissionRate ??
+          0;
+        const extractedCommission = Number(rawComm) || 0;
+
+        const extractedIsActive = extractIsActive(data);
+        console.log('[Login Auth] Backend user object:', data.user);
+        console.log('[Login Auth] Extracted isActive status:', extractedIsActive);
+
         const userObj = {
           _id: data.user?._id || data.user?.id || '',
           name: data.user?.name || '',
@@ -168,10 +186,16 @@ export default function LoginScreen() {
           openTime: data.user?.openTime || '',
           closeTime: data.user?.closeTime || '',
           restaurantLocation: data.user?.restaurantLocation || '',
-          commission: data.user?.commission || 0,
+          commission: extractedCommission,
+          commissionRate: extractedCommission,
+          isActive: extractedIsActive,
         };
 
+        await AsyncStorage.removeItem('commission');
         await AsyncStorage.setItem('userData', JSON.stringify(userObj));
+        if (extractedCommission > 0) {
+          await AsyncStorage.setItem('commission', String(extractedCommission));
+        }
         await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
         await AsyncStorage.removeItem('battery_prompt_dismissed');
         if (effectiveRestId) {
@@ -184,8 +208,12 @@ export default function LoginScreen() {
         // Dispatch to Redux — makes userData instantly available everywhere
         dispatch(setUser(userObj));
 
-        // Initialize FCM & Send device token to backend
-        await initFCMToken(userObj);
+        // Refresh OrdersContext state with new restaurant identity & commission
+        if (loadRestaurantInfo) {
+          try {
+            await loadRestaurantInfo();
+          } catch (_err) {}
+        }
 
         setIsLoading(false);
         router.replace('/home');

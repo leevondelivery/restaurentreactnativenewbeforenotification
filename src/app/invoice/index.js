@@ -18,6 +18,55 @@ import { getDisplayOrderId } from '../orders';
 
 import './invoice.css';
 
+const getSafeAddress = (obj, fallbackObj) => {
+  const candidates = [
+    obj?.restaurantAddress,
+    obj?.restAddress,
+    obj?.address,
+    obj?.restLocation,
+    obj?.restaurantLocation,
+    obj?.location,
+    fallbackObj?.address,
+    fallbackObj?.restAddress,
+    fallbackObj?.restaurantAddress,
+    fallbackObj?.restLocation,
+    fallbackObj?.restaurantLocation,
+    fallbackObj?.location,
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim().length > 0) {
+      return c.trim();
+    }
+  }
+  return '';
+};
+
+const getSafePhone = (obj, fallbackObj) => {
+  const candidates = [
+    obj?.restaurantPhone,
+    obj?.phone,
+    obj?.mobileNumber,
+    obj?.mobile,
+    obj?.contactNumber,
+    obj?.restaurantMobile,
+    fallbackObj?.phone,
+    fallbackObj?.mobileNumber,
+    fallbackObj?.mobile,
+    fallbackObj?.contactNumber,
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim().length > 0) {
+      return c.trim();
+    }
+    if (typeof c === 'number') {
+      return String(c);
+    }
+  }
+  return '';
+};
+
 export default function OrderInvoiceScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -65,19 +114,20 @@ export default function OrderInvoiceScreen() {
 
   // Fallback defaults matching user reference screenshot
   const restaurantName =
-    userData?.name || userData?.restaurantName || 'Test Restaurant';
-  const restaurantAddress =
-    userData?.address || userData?.restLocation || 'Nandyal Road';
-  const fssaiNumber = userData?.fssai || '1234567';
+    order?.restaurantName || userData?.name || userData?.restaurantName || userData?.restName || '';
+  const restaurantAddress = getSafeAddress(order, userData);
+  const gstNumber = order?.gstin || userData?.gstin || userData?.gst || '37AANFL1602Q1ZW';
+  const restaurantPhone = getSafePhone(order, userData);
 
   const orderIdVal = getDisplayOrderId(order || params);
-  const dateStr =
-    order?.createdAtFormatted ||
-    (order?.createdAt
-      ? new Date(order.createdAt).toLocaleString()
-      : '8/8/2026, 01:48:34 AM');
+  
+  const rawDate = order?.acceptedAt || order?.createdAt || order?.orderDate;
+  const dateObj = rawDate ? new Date(rawDate) : new Date();
+  const dateStr = !isNaN(dateObj.getTime())
+    ? dateObj.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+    : new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
-  const commRate = order?.commissionRate ?? userData?.commission ?? 12;
+  const customerName = order?.customerName || order?.userName || order?.user?.name || '';
 
   let itemsRaw = [];
   if (Array.isArray(order?.items) && order.items.length > 0) {
@@ -93,26 +143,35 @@ export default function OrderInvoiceScreen() {
   }
 
   const itemsList = itemsRaw.map((it) => {
-    const rawPrice = it.originalPrice ?? it.price ?? 200.0;
-    const discountedPrice =
-      it.priceAfterCommission ??
-      (it.price !== undefined && it.price < rawPrice
-        ? it.price
-        : rawPrice - rawPrice * (commRate / 100));
+    const rawPrice = Number(it.originalPrice ?? it.price ?? 200.0) || 0;
     return {
       name: it.name || 'Item',
-      quantity: it.quantity || 1,
-      price: discountedPrice,
+      quantity: Number(it.quantity || it.qty || 1) || 1,
+      price: rawPrice,
     };
   });
 
-  const grandTotalVal =
-    order?.netEarnings ??
-    order?.totalPrice ??
-    itemsList.reduce(
-      (acc, it) => acc + it.price * (it.quantity || 1),
-      0
-    );
+  const totalQtySum = itemsList.reduce((acc, it) => acc + (Number(it.quantity) || 1), 0);
+
+  const itemsSubtotal = itemsList.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0);
+
+  const storedGstRate = Number(order?.gstPercentage ?? order?.gstRate ?? order?.gstPercent ?? 0);
+  const calculatedGst = rawGst > 0 ? rawGst : (storedGstRate > 0 ? itemsSubtotal * (storedGstRate / 100) : 0);
+  const finalGst = Number(calculatedGst.toFixed(2));
+
+  const effectiveGstRate = storedGstRate > 0
+    ? storedGstRate
+    : (itemsSubtotal > 0 && finalGst > 0 ? Number(((finalGst / itemsSubtotal) * 100).toFixed(1)) : 5);
+
+  const halfRate = Number((effectiveGstRate / 2).toFixed(2));
+
+  const cgstVal = rawCgst > 0 ? rawCgst : (finalGst > 0 ? Number((finalGst / 2).toFixed(2)) : Number((itemsSubtotal * (halfRate / 100)).toFixed(2)));
+  const sgstVal = rawSgst > 0 ? rawSgst : (finalGst > 0 ? Number((finalGst / 2).toFixed(2)) : Number((itemsSubtotal * (halfRate / 100)).toFixed(2)));
+
+  const cgstLabel = `CGST (${halfRate}%)`;
+  const sgstLabel = `SGST (${halfRate}%)`;
+
+  const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal)).toFixed(2));
 
   const handlePrintReceipt = async () => {
     try {
@@ -120,95 +179,178 @@ export default function OrderInvoiceScreen() {
         <!DOCTYPE html>
         <html>
           <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
-            <title>Receipt - ${orderIdVal}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <title></title>
             <style>
               @page {
                 size: auto;
-                margin: 0;
+                margin: 0mm !important;
               }
-              body {
-                font-family: 'Courier New', Courier, monospace;
-                padding: 30px;
-                color: #111111;
+              @media print {
+                @page {
+                  margin: 0mm !important;
+                }
+                html, body {
+                  width: 100% !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  background: #ffffff !important;
+                }
+                tr, td, th {
+                  page-break-inside: avoid !important;
+                  break-inside: avoid !important;
+                }
+              }
+              * {
+                box-sizing: border-box;
+              }
+              html, body {
+                width: 100%;
+                margin: 0;
+                padding: 0;
                 background-color: #ffffff;
-                max-width: 450px;
+                color: #000000;
+                font-family: 'Courier New', Courier, monospace;
+                font-size: 11px;
+                line-height: 1.3;
+              }
+              .receipt-wrapper {
+                width: 100%;
+                max-width: 280px;
                 margin: 0 auto;
+                padding: 8px 4px 24px 4px;
               }
               .center { text-align: center; }
               .bold { font-weight: bold; }
-              .divider { text-align: center; margin: 12px 0; color: #888888; letter-spacing: 1px; }
-              table { width: 100%; border-collapse: collapse; margin: 14px 0; }
-              th, td { font-family: 'Courier New', Courier, monospace; padding: 6px 0; font-size: 14px; }
-              th { text-align: left; font-weight: bold; }
-              .right { text-align: right; font-weight: bold; }
+              .divider {
+                text-align: center;
+                margin: 6px 0;
+                color: #444444;
+                letter-spacing: -0.5px;
+                white-space: nowrap;
+                overflow: hidden;
+              }
+              table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+              th, td {
+                font-family: 'Courier New', Courier, monospace;
+                padding: 3px 0;
+                font-size: 10px;
+                word-break: break-word;
+              }
+              th { text-align: left; font-weight: bold; border-bottom: 1px dashed #444444; }
+              .right { text-align: right; }
               .center-col { text-align: center; }
-              .total-row { font-size: 16px; font-weight: bold; margin-top: 14px; }
-              .footer { font-style: italic; margin-top: 20px; text-align: center; }
+              .row-flex { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
+              .total-row { border-top: 1px dashed #000000; border-bottom: 1px dashed #000000; font-size: 13px; font-weight: bold; padding: 6px 0; margin-top: 4px; display: flex; justify-content: space-between; }
+              .footer { margin-top: 12px; font-size: 11px; color: #000000; text-align: center; font-weight: bold; }
             </style>
           </head>
           <body>
-            <div class="center">
-              <h2 style="margin:0; font-size:20px;">🍽️ ${restaurantName}</h2>
-              <p style="margin:4px 0; font-size:12px;">Address: ${restaurantAddress}</p>
-              <p style="margin:4px 0; font-size:12px;">FSSAI: ${fssaiNumber}</p>
-            </div>
-            <div class="divider">---------------------------------------------</div>
-            <div>
-              <p style="margin:4px 0;" class="bold">Order ID: ${orderIdVal}</p>
-              <p style="margin:4px 0;">Date: ${dateStr}</p>
-            </div>
-            <div class="divider">---------------------------------------------</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>ITEM</th>
-                  <th class="center-col">QTY</th>
-                  <th class="right">PRICE</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${itemsList
-                  .map(
-                    (item) => `
+            <div class="receipt-wrapper">
+              <!-- Block 1: Restaurant Info -->
+              <div class="center bold" style="font-size: 15px;">${restaurantName}</div>
+              <div class="center" style="font-size: 10px; margin-top: 2px;">Address: ${restaurantAddress}</div>
+              <div class="center" style="font-size: 10px;">The GSTIN : ${gstNumber}</div>
+              ${restaurantPhone ? `<div class="center" style="font-size: 10px;">Phone: ${restaurantPhone}</div>` : ''}
+
+              <div class="divider">--------------------------------</div>
+
+              <!-- Block 2: Order & Delivery Info -->
+              <div style="font-size: 11px;"><strong>Order ID:</strong> ${orderIdVal}</div>
+              <div style="font-size: 11px;"><strong>Date:</strong> ${dateStr}</div>
+              <div class="bold" style="font-size: 12px; margin-top: 4px; margin-bottom: 2px;">From Leevon Delivery</div>
+
+              <div class="divider">--------------------------------</div>
+
+              <!-- Block 4: Items Table -->
+              <table>
+                <thead>
                   <tr>
-                    <td>${item.name}</td>
-                    <td class="center-col">${item.quantity}</td>
-                    <td class="right">₹${Number(item.price || 0).toFixed(2)}</td>
+                    <th style="width: 25px;">NO.</th>
+                    <th>ITEM</th>
+                    <th class="center-col">QTY</th>
+                    <th class="right">PRICE</th>
+                    <th class="right">AMOUNT</th>
                   </tr>
-                `
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-            <div class="divider">---------------------------------------------</div>
-            <div style="display:flex; justify-content:space-between;" class="total-row">
-              <span>Grand Total</span>
-              <span>₹${Number(grandTotalVal || 0).toFixed(2)}</span>
-            </div>
-            <div class="footer">
-              🙏 Thank you for ordering!
+                </thead>
+                <tbody>
+                  ${itemsList
+                    .map(
+                      (item, idx) => `
+                    <tr>
+                      <td>${idx + 1}</td>
+                      <td>${item.name}</td>
+                      <td class="center-col">${item.quantity}</td>
+                      <td class="right">₹${Number(item.price || 0).toFixed(2)}</td>
+                      <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
+                    </tr>
+                  `
+                    )
+                    .join('')}
+                </tbody>
+              </table>
+
+              <div class="divider">--------------------------------</div>
+
+              <!-- Block 5: Totals Breakdown -->
+              <div class="row-flex">
+                <span>Sub Total</span>
+                <span>₹${itemsSubtotal.toFixed(2)}</span>
+              </div>
+              <div class="row-flex" style="font-size: 10px; color: #444444;">
+                <span>${cgstLabel}</span>
+                <span>₹${cgstVal.toFixed(2)}</span>
+              </div>
+              <div class="row-flex" style="font-size: 10px; color: #444444;">
+                <span>${sgstLabel}</span>
+                <span>₹${sgstVal.toFixed(2)}</span>
+              </div>
+
+              <div class="total-row">
+                <span>Grand Total</span>
+                <span>₹${grandTotalVal.toFixed(2)}</span>
+              </div>
+
+              <div class="divider">--------------------------------</div>
+
+              <!-- Block 6: Footer -->
+              <div class="footer">
+                Thank You, Order Again!
+              </div>
             </div>
           </body>
         </html>
       `;
 
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const printWindow = window.open('', '_blank', 'width=600,height=700');
-        if (printWindow) {
-          printWindow.document.open();
-          printWindow.document.write(htmlContent);
-          printWindow.document.close();
-          printWindow.focus();
-          setTimeout(() => {
-            printWindow.print();
-            printWindow.close();
-          }, 300);
-          return;
-        }
-      }
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        document.body.appendChild(iframe);
 
-      await Print.printAsync({ html: htmlContent });
+        const doc = iframe.contentWindow || iframe.contentDocument;
+        const iframeDoc = doc.document || doc;
+
+        iframeDoc.open();
+        iframeDoc.write(htmlContent);
+        iframeDoc.close();
+
+        setTimeout(() => {
+          if (doc.focus) doc.focus();
+          if (doc.print) doc.print();
+          setTimeout(() => {
+            if (iframe.parentNode) {
+              iframe.parentNode.removeChild(iframe);
+            }
+          }, 1000);
+        }, 300);
+      } else {
+        await Print.printAsync({ html: htmlContent });
+      }
     } catch (err) {
       console.error('Error printing receipt:', err);
     }
@@ -253,23 +395,25 @@ export default function OrderInvoiceScreen() {
 
           {/* White Receipt Paper Container */}
           <View style={styles.receiptPaperCard}>
-            {/* Restaurant Header Section */}
+            {/* Block 1: Restaurant Info Section */}
             <View style={styles.restaurantHeaderSection}>
-              <View style={styles.restaurantTitleRow}>
-                <Text style={{ fontSize: 18 }}>🍽️</Text>
-                <Text style={styles.restaurantNameText}>{restaurantName}</Text>
-              </View>
+              <Text style={styles.restaurantNameText}>{restaurantName}</Text>
               <Text style={styles.restaurantSubDetailText}>
                 Address: {restaurantAddress}
               </Text>
               <Text style={styles.restaurantSubDetailText}>
-                FSSAI: {fssaiNumber}
+                The GSTIN : {gstNumber}
               </Text>
+              {restaurantPhone ? (
+                <Text style={styles.restaurantSubDetailText}>
+                  Phone: {restaurantPhone}
+                </Text>
+              ) : null}
             </View>
 
             <Text style={styles.dashedDividerText}>{dashedLine}</Text>
 
-            {/* Order Info Section */}
+            {/* Block 2: Order & Delivery Info Section */}
             <View style={styles.receiptOrderInfoSection}>
               <Text style={styles.receiptOrderInfoLine}>
                 Order ID: {orderIdVal}
@@ -277,47 +421,59 @@ export default function OrderInvoiceScreen() {
               <Text style={styles.receiptOrderInfoLine}>
                 Date: {dateStr}
               </Text>
+              <Text style={[styles.receiptOrderInfoLine, { fontWeight: 'bold', marginTop: 4, marginBottom: 2 }]}>
+                From Leevon Delivery
+              </Text>
             </View>
 
             <Text style={styles.dashedDividerText}>{dashedLine}</Text>
 
-            {/* Table Header Row */}
+            {/* Block 3: Table Header Row */}
             <View style={styles.receiptTableHeaderRow}>
+              <Text style={[styles.receiptHeaderCol, { flex: 0.6 }]}>NO.</Text>
               <Text style={[styles.receiptHeaderCol, { flex: 2 }]}>ITEM</Text>
-              <Text
-                style={[
-                  styles.receiptHeaderCol,
-                  { flex: 1, textAlign: 'center' },
-                ]}
-              >
-                QTY
-              </Text>
-              <Text
-                style={[
-                  styles.receiptHeaderCol,
-                  { flex: 1, textAlign: 'right' },
-                ]}
-              >
-                PRICE
-              </Text>
+              <Text style={[styles.receiptHeaderCol, { flex: 0.8, textAlign: 'center' }]}>QTY</Text>
+              <Text style={[styles.receiptHeaderCol, { flex: 1.2, textAlign: 'right' }]}>PRICE</Text>
+              <Text style={[styles.receiptHeaderCol, { flex: 1.2, textAlign: 'right' }]}>AMOUNT</Text>
             </View>
-
-            <Text style={styles.dashedDividerText}>{dashedLine}</Text>
 
             {/* Table Items */}
             {itemsList.map((item, idx) => (
               <View key={idx} style={styles.receiptTableItemRow}>
-                <Text style={styles.receiptItemNameText}>{item.name}</Text>
-                <Text style={styles.receiptItemQtyText}>{item.quantity}</Text>
-                <Text style={styles.receiptItemPriceText}>
+                <Text style={[styles.receiptItemNameText, { flex: 0.6 }]}>{idx + 1}</Text>
+                <Text style={[styles.receiptItemNameText, { flex: 2 }]}>{item.name}</Text>
+                <Text style={[styles.receiptItemQtyText, { flex: 0.8, textAlign: 'center' }]}>{item.quantity}</Text>
+                <Text style={[styles.receiptItemPriceText, { flex: 1.2, textAlign: 'right' }]}>
                   ₹{Number(item.price || 0).toFixed(2)}
+                </Text>
+                <Text style={[styles.receiptItemPriceText, { flex: 1.2, textAlign: 'right' }]}>
+                  ₹{(Number(item.price || 0) * Number(item.quantity || 1)).toFixed(2)}
                 </Text>
               </View>
             ))}
 
             <Text style={styles.dashedDividerText}>{dashedLine}</Text>
 
-            {/* Grand Total Row */}
+            {/* Block 5: Totals */}
+            <View style={styles.receiptGrandTotalRow}>
+              <Text style={styles.receiptGrandTotalLabel}>Sub Total</Text>
+              <Text style={styles.receiptGrandTotalVal}>₹{itemsSubtotal.toFixed(2)}</Text>
+            </View>
+            <View style={[styles.receiptGrandTotalRow, { paddingLeft: 12 }]}>
+              <Text style={[styles.receiptGrandTotalLabel, { fontSize: 13, color: '#555555' }]}>{cgstLabel}</Text>
+              <Text style={[styles.receiptGrandTotalVal, { fontSize: 14, color: '#555555' }]}>
+                ₹{cgstVal.toFixed(2)}
+              </Text>
+            </View>
+            <View style={[styles.receiptGrandTotalRow, { paddingLeft: 12 }]}>
+              <Text style={[styles.receiptGrandTotalLabel, { fontSize: 13, color: '#555555' }]}>{sgstLabel}</Text>
+              <Text style={[styles.receiptGrandTotalVal, { fontSize: 14, color: '#555555' }]}>
+                ₹{sgstVal.toFixed(2)}
+              </Text>
+            </View>
+
+            <Text style={styles.dashedDividerText}>{dashedLine}</Text>
+
             <View style={styles.receiptGrandTotalRow}>
               <Text style={styles.receiptGrandTotalLabel}>Grand Total</Text>
               <Text style={styles.receiptGrandTotalVal}>
@@ -325,11 +481,12 @@ export default function OrderInvoiceScreen() {
               </Text>
             </View>
 
-            {/* Thank You Footer */}
+            <Text style={styles.dashedDividerText}>{dashedLine}</Text>
+
+            {/* Block 6: Thank You Footer */}
             <View style={styles.receiptThankYouFooter}>
-              <Text style={{ fontSize: 16 }}>🙏</Text>
-              <Text style={styles.receiptThankYouText}>
-                Thank you for ordering!
+              <Text style={[styles.receiptThankYouText, { fontWeight: 'bold', fontSize: 14 }]}>
+                Thank You, Order Again!
               </Text>
             </View>
           </View>

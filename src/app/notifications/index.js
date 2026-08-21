@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useOrders } from '@/context/OrdersContext';
 import { stopOrderNotificationSound } from '@/services/NotificationService';
-import { getDisplayOrderId } from '../orders';
+import { getDisplayOrderId, getEffectiveCommissionRate } from '../orders';
 
 import './notifications.css';
 
@@ -55,6 +55,11 @@ export default function NotificationsScreen() {
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
   }, [rejectModalVisible, acceptModalVisible, router]);
+
+  // Trigger background fetch immediately on mount so alerts screen shows latest DB orders instantly
+  useEffect(() => {
+    fetchGlobalOrders(true);
+  }, [fetchGlobalOrders]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -192,16 +197,15 @@ export default function NotificationsScreen() {
               } catch (e) {}
             }
 
-            const commRate = Number(
-              order.commissionRate ?? order.commission ?? restaurantInfo?.commission ?? 12
-            ) || 12;
+            const commRate = getEffectiveCommissionRate(order, restaurantInfo?.commission);
 
             // Calculate price after commission discount
             const itemCalculations = itemsRaw.map((it) => {
-              const rawPrice = it.originalPrice ?? it.price ?? 0;
-              const discountedPrice =
-                it.priceAfterCommission ?? rawPrice * (1 - commRate / 100);
-              const qty = it.quantity || 1;
+              const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
+              const discountedPrice = commRate > 0
+                ? rawPrice * (1 - commRate / 100)
+                : (it.priceAfterCommission !== undefined ? Number(it.priceAfterCommission) || 0 : rawPrice);
+              const qty = Number(it.quantity || it.qty || 1) || 1;
               const lineTotal = discountedPrice * qty;
               return {
                 ...it,

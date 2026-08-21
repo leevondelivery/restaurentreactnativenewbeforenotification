@@ -1,28 +1,29 @@
-import React, { useEffect, useState } from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  TouchableOpacity,
-  BackHandler,
-  Platform,
-} from 'react-native';
+import { fetchRejectedOrders as apiFetchRejectedOrders } from '@/services/api';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
-import { fetchRejectedOrders as apiFetchRejectedOrders } from '@/services/api';
+import React, { useEffect, useState } from 'react';
+import {
+  BackHandler,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import CustomLoader from '@/components/CustomLoader';
-import { getDisplayOrderId } from '../orders';
+import { useOrders } from '@/context/OrdersContext';
+import { getDisplayOrderId, getEffectiveCommissionRate } from '../orders';
 
 import './rejectedorders.css';
 
 export default function RejectedOrdersScreen() {
   const router = useRouter();
+  const { restaurantInfo } = useOrders();
   const [orders, setOrders] = useState([]);
   const safeOrders = Array.isArray(orders) ? orders : [];
   const [loading, setLoading] = useState(true);
@@ -67,7 +68,7 @@ export default function RejectedOrdersScreen() {
             storedUser?.id ||
             ''
           ).trim();
-        } catch (e) {}
+        } catch (e) { }
       }
       if (!targetRestId && storedRestId) {
         targetRestId = String(storedRestId).trim();
@@ -153,7 +154,7 @@ export default function RejectedOrdersScreen() {
 
         {safeOrders.map((order) => {
           if (!order) return null;
-          const commRate = Number(order.commission !== undefined ? order.commission : 12);
+          const commRate = getEffectiveCommissionRate(order, restaurantInfo?.commission);
           const keepPct = 100 - commRate;
 
           const formattedDate =
@@ -161,10 +162,10 @@ export default function RejectedOrdersScreen() {
             (order.rejectedAt
               ? new Date(order.rejectedAt).toLocaleString()
               : order.orderDate
-              ? new Date(order.orderDate).toLocaleString()
-              : order.createdAt
-              ? new Date(order.createdAt).toLocaleString()
-              : new Date().toLocaleString());
+                ? new Date(order.orderDate).toLocaleString()
+                : order.createdAt
+                  ? new Date(order.createdAt).toLocaleString()
+                  : new Date().toLocaleString());
 
           let itemsList = [];
           if (Array.isArray(order.items) && order.items.length > 0) {
@@ -173,7 +174,7 @@ export default function RejectedOrdersScreen() {
             try {
               const parsed = JSON.parse(order.items);
               if (Array.isArray(parsed) && parsed.length > 0) itemsList = parsed;
-            } catch (e) {}
+            } catch (e) { }
           }
           if (itemsList.length === 0) {
             itemsList = [{ name: 'Item', quantity: 1, price: order.totalPrice || 0 }];

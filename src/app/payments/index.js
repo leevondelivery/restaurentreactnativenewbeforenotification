@@ -1,21 +1,20 @@
 
-import React, { useEffect, useState } from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  TouchableOpacity,
-  BackHandler,
-  Platform,
-} from 'react-native';
+import { fetchPayments as apiFetchPayments, fetchPendingPayments } from '@/services/api';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
-import { fetchPayments as apiFetchPayments } from '@/services/api';
+import React, { useEffect, useState } from 'react';
+import {
+  BackHandler,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import CustomLoader from '@/components/CustomLoader';
 
@@ -66,34 +65,134 @@ export default function PaymentsScreen() {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const response = await apiFetchPayments(targetRestId, controller.signal);
+      let response = null;
+      try {
+        response = await fetchPendingPayments(targetRestId, controller.signal);
+        if (!response.ok) {
+          response = await apiFetchPayments(targetRestId, controller.signal);
+        }
+      } catch (e) {
+        try {
+          response = await apiFetchPayments(targetRestId, controller.signal);
+        } catch (err) { }
+      }
 
       clearTimeout(timeoutId);
-      const data = await response.json();
 
-      if (response.ok && data.success) {
-        setGrossTotal(data.grossTotal ?? 0);
-        setGrandTotal(data.grandTotal ?? 0);
-        const rawTxList = Array.isArray(data.transactions) ? data.transactions : [];
-        
-        let txList = [];
-        rawTxList.forEach((item) => {
-          if (!item) return;
-          if (Array.isArray(item.transactions) && item.transactions.length > 0) {
-            txList.push(...item.transactions);
-          } else if (item.orderId || item.amount !== undefined || item.transactionId) {
-            // Ensure we don't include raw parent document objects that lack orderId/amount
-            txList.push(item);
-          }
-        });
-        setTransactions(txList);
-      } else {
+      if (!response || !response.ok) {
         setGrossTotal(0);
         setGrandTotal(0);
         setTransactions([]);
+        return;
       }
+
+      const data = await response.json();
+
+      // Normalize document list from API response
+      let docList = [];
+      if (Array.isArray(data)) {
+        docList = data;
+      } else if (Array.isArray(data.data)) {
+        docList = data.data;
+      } else if (Array.isArray(data.pendingPayments)) {
+        docList = data.pendingPayments;
+      } else if (Array.isArray(data.payments)) {
+        docList = data.payments;
+      } else if (data && typeof data === 'object') {
+        docList = [data];
+        if (data.payment && typeof data.payment === 'object') docList.push(data.payment);
+        if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) docList.push(data.data);
+      }
+
+      let mainGross = 0;
+      let mainGrand = 0;
+      let extractedTransactions = [];
+
+      docList.forEach((doc) => {
+        if (!doc || typeof doc !== 'object') return;
+
+        if (doc.grossTotal !== undefined) mainGross = Number(doc.grossTotal) || mainGross;
+        if (doc.grandTotal !== undefined) mainGrand = Number(doc.grandTotal) || mainGrand;
+
+        const parentCommission = doc.commissionRate;
+        const parentRestName = doc.restaurantName;
+
+        // Target specifically the transactions array inside the document
+        const txArray = doc.transactions || doc.transactionList;
+        if (Array.isArray(txArray) && txArray.length > 0) {
+          txArray.forEach((tx) => {
+            if (!tx || typeof tx !== 'object') return;
+            extractedTransactions.push({
+              ...tx,
+              _id: tx._id || tx.transactionId || `tx_${Math.random()}`,
+              transactionId: tx.transactionId || tx.id || tx._id,
+              amount: tx.amount ?? tx.grandTotal ?? tx.totalAmount ?? 0,
+              commissionRate: tx.commissionRate ?? parentCommission ?? null,
+              restaurantName: tx.restaurantName ?? parentRestName ?? '',
+              date: tx.date || tx.createdAt || tx.timestamp || doc.createdAt || doc.updatedAt,
+              status: tx.status || 'Completed',
+            });
+          });
+        }
+      });
+
+      // Fallbacks if top level object contains total fields
+      if (data.grossTotal !== undefined) mainGross = Number(data.grossTotal) || mainGross;
+      if (data.grandTotal !== undefined) mainGrand = Number(data.grandTotal) || mainGrand;
+
+      if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+        data.transactions.forEach((tx) => {
+          if (!tx || typeof tx !== 'object') return;
+          if (Array.isArray(tx.transactions)) {
+            tx.transactions.forEach((subTx) => {
+              extractedTransactions.push({
+                ...subTx,
+                _id: subTx._id || subTx.transactionId || `tx_${Math.random()}`,
+                transactionId: subTx.transactionId || subTx.id || subTx._id,
+                amount: subTx.amount ?? subTx.grandTotal ?? 0,
+                date: subTx.date || subTx.createdAt,
+                status: subTx.status || 'Completed',
+              });
+            });
+          } else {
+            extractedTransactions.push({
+              ...tx,
+              _id: tx._id || tx.transactionId || `tx_${Math.random()}`,
+              transactionId: tx.transactionId || tx.id || tx._id,
+              amount: tx.amount ?? tx.grandTotal ?? 0,
+              date: tx.date || tx.createdAt,
+              status: tx.status || 'Completed',
+            });
+          }
+        });
+      }
+
+      // Deduplicate extracted transactions by unique key
+      const seenIds = new Set();
+      const finalTxList = [];
+      extractedTransactions.forEach((item) => {
+        const key = String(item._id || item.transactionId);
+        if (key && !seenIds.has(key)) {
+          seenIds.add(key);
+          finalTxList.push(item);
+        }
+      });
+
+      // Sort transactions descending by date (latest transactions at the top)
+      finalTxList.sort((a, b) => {
+        const timeA = new Date(a.date || a.createdAt || a.timestamp || 0).getTime();
+        const timeB = new Date(b.date || b.createdAt || b.timestamp || 0).getTime();
+        if (!isNaN(timeA) && !isNaN(timeB) && timeA !== timeB) {
+          return timeB - timeA;
+        }
+        return String(b._id || b.transactionId || '').localeCompare(String(a._id || a.transactionId || ''));
+      });
+
+      setGrossTotal(mainGross);
+      setGrandTotal(mainGrand);
+      setTransactions(finalTxList);
     } catch (err) {
       console.error('Error fetching payments:', err);
       setGrossTotal(0);
@@ -105,15 +204,15 @@ export default function PaymentsScreen() {
   };
 
   const formatTxDateTime = (tx) => {
-    const raw = tx.date || tx.createdAt || tx.timestamp;
+    const raw = tx.date || tx.createdAt || tx.timestamp || tx.updatedAt;
     if (!raw) {
-      return { date: '8/8/2026', time: '04:27 AM' };
+      return { date: 'N/A', time: '' };
     }
 
     const d = new Date(raw);
     if (!isNaN(d.getTime())) {
       const date = d.toLocaleDateString('en-US', {
-        month: 'numeric',
+        month: 'short',
         day: 'numeric',
         year: 'numeric',
       });
@@ -126,8 +225,8 @@ export default function PaymentsScreen() {
     }
 
     return {
-      date: String(tx.date || '8/8/2026'),
-      time: String(tx.time || '04:27 AM'),
+      date: String(tx.date || 'N/A'),
+      time: String(tx.time || ''),
     };
   };
 
@@ -231,26 +330,30 @@ export default function PaymentsScreen() {
             ) : (
               safeTx.map((tx, idx) => {
                 if (!tx) return null;
-                const txId = tx.transactionId || tx.id || `TXN-${98401 - idx}`;
+                const txId = tx.transactionId || tx.id || tx._id || `TXN-${98401 - idx}`;
                 const amountVal = tx.amount ?? tx.grandTotal ?? 0;
                 const grossVal = tx.grossTotal ?? tx.grossAmount ?? null;
                 const commRate = tx.commissionRate ?? null;
-                const commCut = tx.totalCommissionCut ?? null;
-                const statusVal = tx.status || 'Pending Clearance';
+                const commCut = tx.totalCommissionCut ?? (grossVal !== null && amountVal !== null && grossVal > amountVal ? parseFloat((grossVal - amountVal).toFixed(2)) : null);
+                const rawStatus = String(tx.status || '').trim();
+                const isPending = !rawStatus || rawStatus.toLowerCase().includes('pend') || rawStatus.toLowerCase().includes('clearance') || rawStatus.toLowerCase().includes('unpaid');
+                const statusVal = isPending ? 'Pending Clearance' : (rawStatus || 'Paid');
                 const orderIdVal = tx.orderId || tx.orderid || null;
                 const { date: txDate, time: txTime } = formatTxDateTime(tx);
 
                 return (
-                  <View key={tx._id || idx} style={styles.transactionCard}>
+                  <View key={tx._id || tx.transactionId || idx} style={styles.transactionCard}>
                     {/* Top Row: Transaction ID & Status Badge */}
                     <View style={styles.transactionTopHeaderRow}>
                       <View style={styles.txInfoCol}>
                         <Text style={styles.txIdLabel}>TRANSACTION ID</Text>
                         <Text style={styles.txIdValue}>{txId}</Text>
                       </View>
-                      <View style={styles.statusPill}>
-                        <View style={styles.statusDot} />
-                        <Text style={styles.statusPillText}>{statusVal}</Text>
+                      <View style={[styles.statusPill, isPending ? styles.statusPillPending : styles.statusPillSuccess]}>
+                        <View style={[styles.statusDot, isPending ? styles.statusDotPending : styles.statusDotSuccess]} />
+                        <Text style={[styles.statusPillText, isPending ? styles.statusPillTextPending : styles.statusPillTextSuccess]}>
+                          {statusVal}
+                        </Text>
                       </View>
                     </View>
 
@@ -260,7 +363,7 @@ export default function PaymentsScreen() {
                         <Ionicons name="swap-horizontal" size={20} color="#FFFFFF" />
                       </View>
                       <View style={styles.txAmountDetailsCol}>
-                        <Text style={styles.netAmountLabel}>NET EARNINGS</Text>
+                        <Text style={styles.netAmountLabel}>AMOUNT</Text>
                         <Text style={styles.txAmountText}>{formatCurrency(amountVal)}</Text>
                       </View>
                       {(grossVal !== null || commCut !== null) && (
@@ -270,7 +373,7 @@ export default function PaymentsScreen() {
                               Gross: <Text style={styles.breakdownVal}>{formatCurrency(grossVal)}</Text>
                             </Text>
                           )}
-                          {commCut !== null && (
+                          {commCut !== null && commCut > 0 && (
                             <Text style={styles.breakdownText}>
                               Comm {commRate ? `(${commRate}%)` : ''}: <Text style={styles.breakdownCutVal}>-{formatCurrency(commCut)}</Text>
                             </Text>
@@ -287,14 +390,18 @@ export default function PaymentsScreen() {
                           <Text style={styles.txBadgeTextOrder}>Order #{orderIdVal}</Text>
                         </View>
                       )}
-                      <View style={styles.txBadgePill}>
-                        <Ionicons name="calendar-outline" size={14} color="#555555" />
-                        <Text style={styles.txBadgeText}>{txDate}</Text>
-                      </View>
-                      <View style={styles.txBadgePill}>
-                        <Ionicons name="time-outline" size={14} color="#555555" />
-                        <Text style={styles.txBadgeText}>{txTime}</Text>
-                      </View>
+                      {txDate !== 'N/A' && (
+                        <View style={styles.txBadgePill}>
+                          <Ionicons name="calendar-outline" size={14} color="#555555" />
+                          <Text style={styles.txBadgeText}>{txDate}</Text>
+                        </View>
+                      )}
+                      {txTime !== '' && (
+                        <View style={styles.txBadgePill}>
+                          <Ionicons name="time-outline" size={14} color="#555555" />
+                          <Text style={styles.txBadgeText}>{txTime}</Text>
+                        </View>
+                      )}
                     </View>
                   </View>
                 );
@@ -515,6 +622,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#D97706',
+  },
+  statusPillPending: {
+    backgroundColor: '#FFF8E7',
+  },
+  statusDotPending: {
+    backgroundColor: '#D97706',
+  },
+  statusPillTextPending: {
+    color: '#D97706',
+  },
+  statusPillSuccess: {
+    backgroundColor: '#ECFDF5',
+  },
+  statusDotSuccess: {
+    backgroundColor: '#10B981',
+  },
+  statusPillTextSuccess: {
+    color: '#047857',
   },
   transactionMainRow: {
     flexDirection: 'row',

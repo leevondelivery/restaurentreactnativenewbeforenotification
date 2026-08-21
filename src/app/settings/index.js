@@ -19,6 +19,8 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useSelector, useDispatch } from 'react-redux';
 import { clearUser, setUser } from '@/store/userSlice';
 import notifee from '@notifee/react-native';
+import { clearFCMTokenOnLogout, stopOrderNotificationSound } from '@/services/NotificationService';
+import { stopOrderSoundNative } from '@/services/soundService';
 
 import './settings.css';
 
@@ -108,17 +110,34 @@ export default function SettingsScreen() {
   const handleLogout = async () => {
     try {
       setLogoutModalVisible(false);
+
+      // 1. Immediately stop any active order alert sounds
+      try {
+        await stopOrderNotificationSound();
+        await stopOrderSoundNative();
+      } catch (e) {}
+
+      // 2. Clear FCM Token from backend (with 1.2s timeout so logout is never delayed)
+      try {
+        await Promise.race([
+          clearFCMTokenOnLogout(userData),
+          new Promise((resolve) => setTimeout(resolve, 1200)),
+        ]);
+      } catch (e) {}
+
+      // 3. Wipe local AsyncStorage & Redux user session
       dispatch(clearUser());
       await AsyncStorage.clear();
-      console.log('AsyncStorage and Redux session completely cleared on logout.');
+      console.log('[Logout] Cleared FCM token, stopped sounds, & wiped session.');
     } catch (error) {
-      console.error('Error clearing AsyncStorage on logout:', error);
+      console.error('Error clearing session on logout:', error);
       try {
         await AsyncStorage.multiRemove([
           'userData',
           'userToken',
           'restId',
           'restaurantInfo',
+          'commission',
           'fcmToken',
           'isLoggedIn',
           'lastActiveTimestamp',

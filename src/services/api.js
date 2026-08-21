@@ -55,10 +55,30 @@ export const acceptOrder = (payload) =>
     body: JSON.stringify(payload),
   });
 
+export const updateOrderPrepStatus = async (payload) => {
+  try {
+    const res = await fetchWithTimeout(BASE_URL + '/api/orders/update-status', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return res;
+  } catch (e) {}
+
+  return fetchWithTimeout(BASE_URL + '/api/orders/accept-order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+};
+
 // Payments
 
 export const fetchPayments = (restaurantId, signal) =>
   fetch(BASE_URL + '/api/payments?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
+
+export const fetchPendingPayments = (restaurantId, signal) =>
+  fetch(BASE_URL + '/api/pendingpayments?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
 
 export const insertPendingPayment = (payload) =>
   fetchWithTimeout(BASE_URL + '/api/pendingpayments', {

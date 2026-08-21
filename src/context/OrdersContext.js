@@ -1,16 +1,17 @@
+import {
+  acceptOrder as apiAcceptOrder,
+  rejectOrder as apiRejectOrder,
+  fetchAcceptedByRestaurants,
+  fetchAcceptedOrders,
+  fetchIncomingOrdersContext,
+  insertPendingPayment,
+  updateOrderPrepStatus,
+} from '@/services/api';
+import { displayOrderNotification, extractRestId, isOrderNotified, markOrderAsNotified, stopOrderNotificationSound } from '@/services/NotificationService';
+import { playOrderSound } from '@/services/soundService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import {
-  fetchAcceptedOrders,
-  fetchAcceptedByRestaurants,
-  fetchIncomingOrdersContext,
-  rejectOrder as apiRejectOrder,
-  acceptOrder as apiAcceptOrder,
-  insertPendingPayment,
-} from '@/services/api';
-import { stopOrderNotificationSound, displayOrderNotification, extractRestId, markOrderAsNotified, isOrderNotified } from '@/services/NotificationService';
-import { playOrderSound } from '@/services/soundService';
 
 const OrdersContext = createContext();
 
@@ -18,9 +19,9 @@ export const getBaseApiUrl = () => BASE_URL;
 
 export const OrdersProvider = ({ children }) => {
   // Data from 'accepted orders' (acceptedorders) collection -> used in /tracker
-  const [orders, setOrders] = useState([]); 
+  const [orders, setOrders] = useState([]);
   // Data from 'acceptedbyrestaurent' (acceptedbyrestorents) collection -> used in /orders
-  const [trackerOrders, setTrackerOrders] = useState([]); 
+  const [trackerOrders, setTrackerOrders] = useState([]);
   const [incomingOrders, setIncomingOrders] = useState([]); // Pending incoming orders
   const [incomingCount, setIncomingCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -28,11 +29,14 @@ export const OrdersProvider = ({ children }) => {
   const isInitialFetchRef = useRef(true);
   const [restaurantInfo, setRestaurantInfo] = useState({
     restId: '',
-    commission: 12,
-    address: 'Nandyal Road, Kurnool',
-    fssai: '12345678901234',
-    lat: 15.83,
-    lng: 78.01,
+    name: '',
+    phone: '',
+    gstin: '37AANFL1602Q1ZW',
+    commission: 0,
+    address: '',
+    fssai: '',
+    lat: null,
+    lng: null,
   });
 
   const pollingTimerRef = useRef(null);
@@ -66,36 +70,126 @@ export const OrdersProvider = ({ children }) => {
         parsedUser?._id ||
         '';
 
-      const commission =
-        storedCommission !== null
-          ? Number(storedCommission)
-          : parsedUser?.commission ?? 12;
+      const name =
+        parsedUser?.name ||
+        parsedUser?.restaurantName ||
+        parsedUser?.restName ||
+        '';
+
+      const phone =
+        parsedUser?.phone ||
+        parsedUser?.mobileNumber ||
+        parsedUser?.mobile ||
+        parsedUser?.contactNumber ||
+        parsedUser?.mobileNo ||
+        parsedUser?.phoneNumber ||
+        '';
+
+      const gstin =
+        parsedUser?.gstin ||
+        parsedUser?.gst ||
+        parsedUser?.gstNumber ||
+        '37AANFL1602Q1ZW';
+
+      let commission = 0;
+      let hasUserComm = false;
+      if (parsedUser && typeof parsedUser === 'object') {
+        const candKeys = [
+          'commission',
+          'commissionRate',
+          'commission_rate',
+          'commissionPercent',
+          'commission_percent',
+          'commissionPercentage',
+          'adminCommission',
+          'restaurantCommission',
+          'commRate',
+          'comm',
+        ];
+        for (const k of candKeys) {
+          if (parsedUser[k] !== undefined && parsedUser[k] !== null && parsedUser[k] !== '') {
+            const val = Number(parsedUser[k]);
+            if (!isNaN(val)) {
+              commission = val;
+              hasUserComm = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!hasUserComm && storedCommission !== null && storedCommission !== undefined && storedCommission !== '') {
+        const val = Number(storedCommission);
+        if (!isNaN(val) && val > 0) {
+          commission = val;
+        }
+      }
+
+      if (commission === 0) {
+        commission = 5;
+      }
+
+      await AsyncStorage.setItem('commission', String(commission));
+      if (parsedUser) {
+        parsedUser.commission = commission;
+        parsedUser.commissionRate = commission;
+        await AsyncStorage.setItem('userData', JSON.stringify(parsedUser));
+      }
 
       const address =
         storedAddress ||
         parsedUser?.address ||
+        parsedUser?.restAddress ||
+        parsedUser?.restaurantAddress ||
         parsedUser?.restLocation ||
-        'Nandyal Road, Kurnool';
+        parsedUser?.restaurantLocation ||
+        parsedUser?.location ||
+        '';
 
-      const fssai = storedFssai || parsedUser?.fssai || '12345678901234';
-      const lat = storedLat ? Number(storedLat) : parsedUser?.lat ?? 15.83;
-      const lng = storedLng ? Number(storedLng) : parsedUser?.lng ?? 78.01;
+      const fssai = storedFssai || parsedUser?.fssai || '';
 
-      setRestaurantInfo({
+      const lat =
+        storedLat !== null && storedLat !== undefined && storedLat !== ''
+          ? Number(storedLat)
+          : (parsedUser?.lat !== undefined && parsedUser?.lat !== null
+            ? Number(parsedUser.lat)
+            : (parsedUser?.latitude !== undefined && parsedUser?.latitude !== null
+              ? Number(parsedUser.latitude)
+              : null));
+
+      const lng =
+        storedLng !== null && storedLng !== undefined && storedLng !== ''
+          ? Number(storedLng)
+          : (parsedUser?.lng !== undefined && parsedUser?.lng !== null
+            ? Number(parsedUser.lng)
+            : (parsedUser?.longitude !== undefined && parsedUser?.longitude !== null
+              ? Number(parsedUser.longitude)
+              : null));
+
+      const info = {
         restId,
+        name,
+        phone,
+        gstin,
         commission,
         address,
         fssai,
         lat,
         lng,
-      });
+      };
 
-      return { restId, commission, address, fssai, lat, lng };
+      setRestaurantInfo(info);
+      return info;
     } catch (err) {
       console.error('OrdersContext: Error loading stored restaurant info:', err);
       return restaurantInfo;
     }
   }, []);
+
+  // Ensure restaurant identity is loaded on mount
+  useEffect(() => {
+    loadRestaurantInfo();
+  }, [loadRestaurantInfo]);
 
   // Fetch both accepted orders and incoming orders from API
   const fetchGlobalOrders = useCallback(async (isPolling = false) => {
@@ -104,6 +198,9 @@ export const OrdersProvider = ({ children }) => {
     }
 
     try {
+      // Ensure restaurant identity & commission context state refreshes for current logged-in user
+      await loadRestaurantInfo();
+
       const storedUserStr = await AsyncStorage.getItem('userData');
       const storedRestId = await AsyncStorage.getItem('restId');
       let restId = storedRestId || '';
@@ -124,21 +221,53 @@ export const OrdersProvider = ({ children }) => {
         if (!isPolling) {
           setLoading(false);
         }
+        setOrders([]);
+        setTrackerOrders([]);
+        setIncomingOrders([]);
+        setIncomingCount(0);
+        try {
+          stopOrderNotificationSound();
+        } catch (e) {}
         return;
       }
 
       let acceptedOrdersData = [];
+      let rawTrack = [];
+      let incomingData = null;
+
       try {
         const controller = new AbortController();
         const tid = setTimeout(() => controller.abort(), 4000);
-        const res = await fetchAcceptedOrders(restId, controller.signal);
+
+        const [resAccepted, resTrack, resIncoming] = await Promise.allSettled([
+          fetchAcceptedOrders(restId, controller.signal),
+          fetchAcceptedByRestaurants(restId, controller.signal),
+          fetchIncomingOrdersContext(restId, controller.signal),
+        ]);
         clearTimeout(tid);
-        if (res.ok) {
-          const json = await res.json();
-          acceptedOrdersData = json.orders || json.data || (Array.isArray(json) ? json : []);
+
+        if (resAccepted.status === 'fulfilled' && resAccepted.value && resAccepted.value.ok) {
+          try {
+            const json = await resAccepted.value.json();
+            acceptedOrdersData = json.orders || json.data || (Array.isArray(json) ? json : []);
+          } catch (e) {}
+        }
+
+        if (resTrack.status === 'fulfilled' && resTrack.value && resTrack.value.ok) {
+          try {
+            const jsonTrack = await resTrack.value.json();
+            rawTrack = jsonTrack.orders || jsonTrack.data || (Array.isArray(jsonTrack) ? jsonTrack : []);
+          } catch (e) {}
+        }
+
+        if (resIncoming.status === 'fulfilled' && resIncoming.value && resIncoming.value.ok) {
+          try {
+            const jsonIncoming = await resIncoming.value.json();
+            incomingData = jsonIncoming.orders || jsonIncoming.incomingOrders || (Array.isArray(jsonIncoming) ? jsonIncoming : null);
+          } catch (e) {}
         }
       } catch (err) {
-        // Network timeout / offline fallback
+        // Parallel fetch error fallback
       }
 
       const filteredAccepted = acceptedOrdersData.filter((o) => {
@@ -166,48 +295,23 @@ export const OrdersProvider = ({ children }) => {
         if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
       });
 
-      // 1b. Fetch Tracker Orders from acceptedbyrestorents
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 4000);
-        const resTrack = await fetchAcceptedByRestaurants(restId, controller.signal);
-        clearTimeout(tid);
-        if (resTrack.ok) {
-          const jsonTrack = await resTrack.json();
-          const rawTrack = jsonTrack.orders || jsonTrack.data || (Array.isArray(jsonTrack) ? jsonTrack : []);
-          const filteredTrack = rawTrack.filter((o) => {
-            if (!o) return false;
-            const oRestId = String(
-              o.restaurantId ||
-              o.restId ||
-              o.restaurant_id ||
-              o.storeId ||
-              o.vendorId ||
-              ''
-            ).trim();
-            if (oRestId && restId) {
-              return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
-            }
-            return true;
-          });
-          setTrackerOrders(filteredTrack);
+      const filteredTrack = rawTrack.filter((o) => {
+        if (!o) return false;
+        const oRestId = String(
+          o.restaurantId ||
+          o.restId ||
+          o.restaurant_id ||
+          o.storeId ||
+          o.vendorId ||
+          (o.restaurant && typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant) ||
+          ''
+        ).trim();
+        if (restId) {
+          return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
         }
-      } catch (errTrack) {}
-
-      // 2. Fetch Incoming Orders
-      let incomingData = null;
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 4000);
-        const res = await fetchIncomingOrdersContext(restId, controller.signal);
-        clearTimeout(tid);
-        if (res.ok) {
-          const json = await res.json();
-          incomingData = json.orders || json.incomingOrders || (Array.isArray(json) ? json : null);
-        }
-      } catch (err) {
-        // Network failure
-      }
+        return true;
+      });
+      setTrackerOrders(filteredTrack);
 
       if (Array.isArray(incomingData) && incomingData.length > 0) {
         // Filter by restaurantId match and filter out any orders processed locally
@@ -273,6 +377,41 @@ export const OrdersProvider = ({ children }) => {
         setLoading(false);
       }
     }
+  }, []);
+
+  // Optimistically insert incoming order from FCM push notification payload directly into state (0ms instant display)
+  const addIncomingOrderOptimistic = useCallback((orderData) => {
+    if (!orderData) return;
+    const orderId = String(orderData.orderId || orderData._id || orderData.id || '');
+    if (!orderId) return;
+
+    setIncomingOrders((prev) => {
+      const exists = prev.some((o) => String(o.orderId || o._id || o.id || '') === orderId);
+      if (exists) return prev;
+
+      let itemsParsed = orderData.items;
+      if (typeof itemsParsed === 'string') {
+        try {
+          itemsParsed = JSON.parse(itemsParsed);
+        } catch (e) {}
+      }
+
+      const normalizedOrder = {
+        _id: orderId,
+        orderId: orderId,
+        grandTotal: orderData.grandTotal || orderData.totalPrice || orderData.amount || '0',
+        totalPrice: orderData.totalPrice || orderData.grandTotal || orderData.amount || '0',
+        userName: orderData.userName || orderData.customerName || orderData.name || 'Customer',
+        userPhone: orderData.userPhone || orderData.phone || orderData.mobileNumber || '',
+        items: Array.isArray(itemsParsed) ? itemsParsed : [],
+        createdAt: orderData.createdAt || new Date().toISOString(),
+        ...orderData,
+      };
+
+      return [normalizedOrder, ...prev];
+    });
+
+    setIncomingCount((prev) => prev + 1);
   }, []);
 
   // Reject Order Flow
@@ -347,6 +486,8 @@ export const OrdersProvider = ({ children }) => {
 
         const acceptedAtStr = new Date().toISOString();
         const estimatedPrepEndTimeStr = new Date(Date.now() + prepMins * 60000).toISOString();
+        const isReady = Number(prepMins) === 0;
+        const initialStatus = isReady ? 'Ready' : 'Preparing';
 
         const payload = {
           orderId: orderIdVal,
@@ -360,8 +501,13 @@ export const OrdersProvider = ({ children }) => {
           },
           razorpayOrderId: targetOrder.razorpayOrderId || 'order_T4fAtetGb5u6c9',
           preparationTime: prepMins,
+          prepTime: prepMins,
+          remainingPrepTimeMins: prepMins,
           acceptedAt: acceptedAtStr,
           estimatedPrepEndTime: estimatedPrepEndTimeStr,
+          status: initialStatus,
+          orderStatus: initialStatus,
+          isReady: isReady,
         };
 
         // 1. Fire accept-order — errors here do NOT block pendingpayments
@@ -394,6 +540,7 @@ export const OrdersProvider = ({ children }) => {
           commissionRate,
           totalCommissionCut,
           date: acceptedAtStr,
+          status: 'Pending Clearance',
         };
 
         console.log('pendingpayments payload being sent:', JSON.stringify(pendingPayload));
@@ -415,11 +562,17 @@ export const OrdersProvider = ({ children }) => {
           ...targetOrder,
           acceptedAt: acceptedAtStr,
           preparationTime: prepMins,
+          prepTime: prepMins,
+          remainingPrepTimeMins: prepMins,
           estimatedPrepEndTime: estimatedPrepEndTimeStr,
-          status: 'Preparing',
+          status: initialStatus,
+          orderStatus: initialStatus,
+          isReady: isReady,
         };
 
         setOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
+        setTrackerOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
+
         // Locally remove from incoming list & stop ringing sound
         stopOrderNotificationSound(orderIdVal);
         stopOrderNotificationSound(altIdStr);
@@ -434,6 +587,130 @@ export const OrdersProvider = ({ children }) => {
     },
     [restaurantInfo]
   );
+
+  // Mark Order as Items Ready Flow (Syncs to MongoDB immediately)
+  const markOrderAsReady = useCallback(async (targetOrderOrId) => {
+    try {
+      let targetId = '';
+      let altTargetId = '';
+      if (typeof targetOrderOrId === 'object' && targetOrderOrId !== null) {
+        targetId = String(targetOrderOrId.orderId || targetOrderOrId._id || targetOrderOrId.id || '').trim();
+        altTargetId = String(targetOrderOrId._id || targetOrderOrId.orderId || '').trim();
+      } else {
+        targetId = String(targetOrderOrId || '').trim();
+      }
+
+      if (!targetId) return { success: false, error: 'No order ID provided' };
+
+      const readyAtStr = new Date().toISOString();
+
+      const updatePayload = {
+        orderId: targetId,
+        _id: targetId,
+        preparationTime: 0,
+        prepTime: 0,
+        remainingPrepTimeMins: 0,
+        status: 'Ready',
+        orderStatus: 'Ready',
+        isReady: true,
+        readyAt: readyAtStr,
+      };
+
+      // Fire API update to MongoDB
+      try {
+        await updateOrderPrepStatus(updatePayload);
+      } catch (err) {
+        console.warn('OrdersContext: markOrderAsReady API call warning:', err);
+      }
+
+      // Update local state immediately
+      const updateOrderState = (prevList) =>
+        prevList.map((o) => {
+          if (!o) return o;
+          const oId1 = String(o._id || '').trim();
+          const oId2 = String(o.orderId || '').trim();
+          if (
+            (targetId && (oId1 === targetId || oId2 === targetId)) ||
+            (altTargetId && (oId1 === altTargetId || oId2 === altTargetId))
+          ) {
+            return {
+              ...o,
+              preparationTime: 0,
+              prepTime: 0,
+              remainingPrepTimeMins: 0,
+              status: 'Ready',
+              orderStatus: 'Ready',
+              isReady: true,
+              readyAt: readyAtStr,
+            };
+          }
+          return o;
+        });
+
+      setOrders(updateOrderState);
+      setTrackerOrders(updateOrderState);
+
+      return { success: true };
+    } catch (err) {
+      console.error('OrdersContext: markOrderAsReady error:', err);
+      return { success: false, error: err.message };
+    }
+  }, []);
+
+  // Setup 1-Minute Periodic Timer Sync to MongoDB for remainingPrepTimeMins & status
+  const syncTimerRef = useRef(null);
+  useEffect(() => {
+    syncTimerRef.current = setInterval(async () => {
+      if (!orders || orders.length === 0) return;
+      const nowMs = Date.now();
+
+      for (const ord of orders) {
+        if (!ord) continue;
+        const statusVal = String(ord.status || ord.orderStatus || '').toLowerCase();
+        if (statusVal === 'ready' || ord.isReady) continue;
+
+        const acceptedAtMs = ord.acceptedAt ? new Date(ord.acceptedAt).getTime() : nowMs;
+        const prepMins = Number(ord.preparationTime ?? ord.prepTime ?? 15);
+        const estimatedPrepEndTimeMs = ord.estimatedPrepEndTime
+          ? new Date(ord.estimatedPrepEndTime).getTime()
+          : acceptedAtMs + prepMins * 60000;
+
+        const remainingMins = Math.max(0, Math.ceil((estimatedPrepEndTimeMs - nowMs) / 60000));
+        const isExpired = remainingMins <= 0;
+        const newStatus = isExpired ? 'Ready' : 'Preparing';
+        const targetId = String(ord.orderId || ord._id || '');
+
+        if (targetId) {
+          const updatePayload = isExpired
+            ? {
+              orderId: targetId,
+              preparationTime: 0,
+              status: 'Ready',
+              orderStatus: 'Ready',
+              isReady: true,
+              readyAt: new Date().toISOString(),
+            }
+            : {
+              orderId: targetId,
+              preparationTime: remainingMins,
+            };
+
+          try {
+            await updateOrderPrepStatus(updatePayload);
+          } catch (e) { }
+
+          // Update state locally if expired
+          if (isExpired) {
+            markOrderAsReady(targetId);
+          }
+        }
+      }
+    }, 60000);
+
+    return () => {
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+    };
+  }, [orders, markOrderAsReady]);
 
   // Setup 5-second background polling loop
   useEffect(() => {
@@ -486,9 +763,13 @@ export const OrdersProvider = ({ children }) => {
         incomingCount,
         loading,
         restaurantInfo,
+        loadRestaurantInfo,
+        refreshRestaurantInfo: loadRestaurantInfo,
         fetchGlobalOrders,
+        addIncomingOrderOptimistic,
         acceptOrder,
         rejectOrder,
+        markOrderAsReady,
         setIncomingOrders,
         setIncomingCount,
       }}

@@ -1,16 +1,17 @@
-import React, { useEffect } from 'react';
-import { View, useColorScheme, Platform } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { DarkTheme, DefaultTheme, ThemeProvider, Stack, usePathname, useRouter, router } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { Provider } from 'react-redux';
-import BottomNavbar from '@/components/navbar/BottomNavbar';
 import BatteryOptimizationModal from '@/components/BatteryOptimizationModal';
+import BottomNavbar from '@/components/navbar/BottomNavbar';
+import { OrdersProvider, useOrders } from '@/context/OrdersContext';
 import store from '@/store/store';
-import { OrdersProvider } from '@/context/OrdersContext';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, usePathname, useRouter } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect } from 'react';
+import { Platform, View, useColorScheme } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Provider } from 'react-redux';
 
+import { displayOrderNotification, extractRestId, initFCMToken, markOrderAsNotified, setupNotificationChannel } from '@/services/NotificationService';
+import { extractIsActive } from '@/utils/statusUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { displayOrderNotification, stopOrderNotificationSound, setupNotificationChannel, initFCMToken, extractRestId, markOrderAsNotified } from '@/services/NotificationService';
 
 // firebase, messaging, notifee are native-only — skip on web
 let firebase, messaging, notifee, EventType;
@@ -33,9 +34,16 @@ if (Platform.OS !== 'web') {
 const isForCurrentRestaurant = async (orderData) => {
   try {
     const storedUserStr = await AsyncStorage.getItem('userData');
-    if (!storedUserStr) return true;
+    if (!storedUserStr) {
+      console.log('[FCM Filter] Restaurant user is LOGGED OUT — skipping push notification & sound.');
+      return false;
+    }
     const u = JSON.parse(storedUserStr);
-    if (u?.isActive === false) {
+    if (!u || (!u._id && !u.restId && !u.email && !u.phone)) {
+      console.log('[FCM Filter] User session invalid — skipping push notification & sound.');
+      return false;
+    }
+    if (extractIsActive(u) === false) {
       console.log('[FCM Filter] Restaurant status is CLOSED (isActive: false) — skipping push notification & sound.');
       return false;
     }
@@ -62,6 +70,7 @@ function AppLayout() {
   const colorScheme = useColorScheme();
   const pathname = usePathname();
   const router = useRouter();
+  const { addIncomingOrderOptimistic, fetchGlobalOrders } = useOrders();
 
   useEffect(() => {
     SplashScreen.hideAsync();
@@ -90,6 +99,7 @@ function AppLayout() {
       if (remoteMessage) {
         const orderData = remoteMessage.data || remoteMessage.notification || {};
         if (await isForCurrentRestaurant(orderData)) {
+          addIncomingOrderOptimistic(orderData);
           await displayOrderNotification(orderData, true);
         }
       }
@@ -98,8 +108,11 @@ function AppLayout() {
     // 3. Handle FCM Notification Tap when app is opened from background
     const unsubscribeFCMTap = messaging().onNotificationOpenedApp((remoteMessage) => {
       console.log('Notification opened app from background:', remoteMessage);
-      const orderId = remoteMessage?.data?.orderId || remoteMessage?.data?._id;
+      const orderData = remoteMessage?.data || remoteMessage?.notification || {};
+      const orderId = orderData?.orderId || orderData?._id;
       if (orderId) markOrderAsNotified(orderId);
+      addIncomingOrderOptimistic(orderData);
+      fetchGlobalOrders(true);
       router.push('/notifications');
     });
 
@@ -109,8 +122,11 @@ function AppLayout() {
       .then((remoteMessage) => {
         if (remoteMessage) {
           console.log('FCM initial notification opened:', remoteMessage);
-          const orderId = remoteMessage?.data?.orderId || remoteMessage?.data?._id;
+          const orderData = remoteMessage?.data || remoteMessage?.notification || {};
+          const orderId = orderData?.orderId || orderData?._id;
           if (orderId) markOrderAsNotified(orderId);
+          addIncomingOrderOptimistic(orderData);
+          fetchGlobalOrders(true);
           setTimeout(() => {
             router.replace('/notifications');
           }, 200);
@@ -121,8 +137,11 @@ function AppLayout() {
       notifee.getInitialNotification().then((initialNotification) => {
         if (initialNotification) {
           console.log('Notifee initial notification opened:', initialNotification);
-          const orderId = initialNotification.notification?.data?.orderId || initialNotification.notification?.data?._id;
+          const orderData = initialNotification.notification?.data || {};
+          const orderId = orderData?.orderId || orderData?._id;
           if (orderId) markOrderAsNotified(orderId);
+          addIncomingOrderOptimistic(orderData);
+          fetchGlobalOrders(true);
           setTimeout(() => {
             router.replace('/notifications');
           }, 200);
@@ -132,12 +151,14 @@ function AppLayout() {
 
     // 5. Notifee Notification Interaction Listener (navigates to notifications/alerts page)
     const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
+      const orderData = detail.notification?.data || {};
+      const orderId = orderData?.orderId || orderData?._id;
       if (type === EventType.PRESS || type === EventType.ACTION_PRESS) {
-        const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
         if (orderId) markOrderAsNotified(orderId);
+        addIncomingOrderOptimistic(orderData);
+        fetchGlobalOrders(true);
         router.push('/notifications');
       } else if (type === EventType.DISMISSED) {
-        const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
         if (orderId) markOrderAsNotified(orderId);
       }
     });
@@ -147,43 +168,41 @@ function AppLayout() {
       unsubscribeFCMTap();
       unsubscribeNotifee();
     };
-  }, [router]);
+  }, [router, addIncomingOrderOptimistic, fetchGlobalOrders]);
 
   const hideNavbarOn = ['/login'];
   const isNavbarVisible = !hideNavbarOn.includes(pathname) && pathname !== '/';
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <OrdersProvider>
-        <View style={{ flex: 1, backgroundColor: '#F7F7EB' }}>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: '#F7F7EB' },
-              animation: 'none',
-              freezeOnBlur: false,
-              detachInactiveScreens: false,
-            }}
-          >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="login" />
-            <Stack.Screen name="home" />
-            <Stack.Screen name="orders" />
-            <Stack.Screen name="tracker" />
-            <Stack.Screen name="settings" />
-            <Stack.Screen name="contact" />
-            <Stack.Screen name="rejectedorders" />
-            <Stack.Screen name="myreviews" />
-            <Stack.Screen name="invoice" />
-            <Stack.Screen name="restaurantprofile" />
-            <Stack.Screen name="payments" />
-            <Stack.Screen name="mymenu" />
-            <Stack.Screen name="notifications" />
-          </Stack>
-          {isNavbarVisible && <BottomNavbar />}
-          {isNavbarVisible && <BatteryOptimizationModal />}
-        </View>
-      </OrdersProvider>
+      <View style={{ flex: 1, backgroundColor: '#F7F7EB' }}>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: '#F7F7EB' },
+            animation: 'none',
+            freezeOnBlur: false,
+            detachInactiveScreens: false,
+          }}
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="home" />
+          <Stack.Screen name="orders" />
+          <Stack.Screen name="tracker" />
+          <Stack.Screen name="settings" />
+          <Stack.Screen name="contact" />
+          <Stack.Screen name="rejectedorders" />
+          <Stack.Screen name="myreviews" />
+          <Stack.Screen name="invoice" />
+          <Stack.Screen name="restaurantprofile" />
+          <Stack.Screen name="payments" />
+          <Stack.Screen name="mymenu" />
+          <Stack.Screen name="notifications" />
+        </Stack>
+        {isNavbarVisible && <BottomNavbar />}
+        {isNavbarVisible && <BatteryOptimizationModal />}
+      </View>
     </ThemeProvider>
   );
 }
@@ -192,7 +211,9 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <Provider store={store}>
-        <AppLayout />
+        <OrdersProvider>
+          <AppLayout />
+        </OrdersProvider>
       </Provider>
     </SafeAreaProvider>
   );

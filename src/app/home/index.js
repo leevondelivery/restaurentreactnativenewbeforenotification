@@ -3,9 +3,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
+import { setUser } from '@/store/userSlice';
+import { extractIsActive } from '@/utils/statusUtils';
 import { useOrders } from '@/context/OrdersContext';
 import { fetchAcceptedByRestaurants, fetchRestaurantStats, updateRestaurantStatus } from '@/services/api';
+import { getEffectiveCommissionRate } from '../orders';
 import {
   Animated,
   Easing,
@@ -23,14 +26,15 @@ import {
 import './home.css';
 
 export default function HomeScreen() {
+  const dispatch = useDispatch();
   const router = useRouter();
   const reduxUserData = useSelector((state) => state.user.userData);
-  const { acceptedByRestaurantsOrders, fetchGlobalOrders } = useOrders();
+  const { acceptedByRestaurantsOrders, fetchGlobalOrders, restaurantInfo } = useOrders();
   const [userData, setUserData] = useState(reduxUserData || null);
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
 
   // Animated value: 1 = OPEN, 0 = CLOSED
-  const animVal = useRef(new Animated.Value(1)).current;
+  const animVal = useRef(new Animated.Value(0)).current;
 
   // Real stats loaded from acceptedbyrestorents collection by restaurantId
   const [todayEarnings, setTodayEarnings] = useState(0);
@@ -43,11 +47,66 @@ export default function HomeScreen() {
   useEffect(() => {
     if (reduxUserData) {
       setUserData(reduxUserData);
-      const activeBool = reduxUserData.isActive !== undefined ? Boolean(reduxUserData.isActive) : true;
+      const activeBool = extractIsActive(reduxUserData);
+      console.log('[Home Screen] Redux user data activeBool:', activeBool, 'raw:', reduxUserData?.isActive);
       setIsOpen(activeBool);
       animVal.setValue(activeBool ? 1 : 0);
     }
   }, [reduxUserData]);
+
+  // Helper to calculate exact Net Earnings after restaurant commission cut for an order
+  const calculateOrderNetEarnings = (ord) => {
+    if (!ord || typeof ord !== 'object') return 0;
+
+    // 1. Determine effective commission percentage for this order & restaurant
+    const commRate = getEffectiveCommissionRate(
+      ord,
+      userData?.commission ?? restaurantInfo?.commission
+    );
+
+    // 2. If items exist, compute sum of discounted item prices (matches Orders & Notifications)
+    let itemsRaw = [];
+    if (Array.isArray(ord.items)) {
+      itemsRaw = ord.items;
+    } else if (typeof ord.items === 'string') {
+      try {
+        const parsed = JSON.parse(ord.items);
+        if (Array.isArray(parsed)) itemsRaw = parsed;
+      } catch (e) {}
+    }
+
+    if (itemsRaw.length > 0) {
+      const itemEarningsSum = itemsRaw.reduce((acc, it) => {
+        if (!it || typeof it !== 'object') return acc;
+        const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
+        const discountedPrice = commRate > 0
+          ? rawPrice * (1 - commRate / 100)
+          : (it.priceAfterCommission !== undefined ? Number(it.priceAfterCommission) || 0 : rawPrice);
+        const qty = Number(it.quantity || it.qty || 1) || 1;
+        return acc + (discountedPrice * qty);
+      }, 0);
+
+      if (itemEarningsSum > 0) {
+        return itemEarningsSum;
+      }
+    }
+
+    // 3. Fallback: Apply commission discount to gross order total
+    const grossTotal = Number(ord.totalPrice ?? ord.grandTotal ?? ord.amount ?? 0) || 0;
+    if (commRate > 0) {
+      return grossTotal * (1 - commRate / 100);
+    }
+
+    // 4. Fallback to stored document property
+    if (ord.totalPriceAfterCommission !== undefined && ord.totalPriceAfterCommission !== null && !isNaN(Number(ord.totalPriceAfterCommission)) && Number(ord.totalPriceAfterCommission) > 0) {
+      return Number(ord.totalPriceAfterCommission);
+    }
+    if (ord.netEarnings !== undefined && ord.netEarnings !== null && !isNaN(Number(ord.netEarnings)) && Number(ord.netEarnings) > 0) {
+      return Number(ord.netEarnings);
+    }
+
+    return grossTotal;
+  };
 
   // Compute stats instantly from background orders context
   useEffect(() => {
@@ -75,9 +134,7 @@ export default function HomeScreen() {
     let totOrders = matchingOrders.length;
 
     matchingOrders.forEach((ord) => {
-      const earnings = Number(
-        ord.totalPriceAfterCommission ?? ord.netEarnings ?? ord.totalPrice ?? 0
-      );
+      const earnings = calculateOrderNetEarnings(ord);
       totEarnings += earnings;
 
       const ordDateRaw = ord.acceptedAt || ord.orderDate || ord.createdAt;
@@ -92,17 +149,14 @@ export default function HomeScreen() {
           tOrders += 1;
           tEarnings += earnings;
         }
-      } else {
-        tOrders += 1;
-        tEarnings += earnings;
       }
     });
 
-    setTodayEarnings(tEarnings);
+    setTodayEarnings(parseFloat(tEarnings.toFixed(2)));
     setTodayOrders(tOrders);
-    setTotalEarnings(totEarnings);
+    setTotalEarnings(parseFloat(totEarnings.toFixed(2)));
     setTotalOrders(totOrders);
-  }, [acceptedByRestaurantsOrders, userData]);
+  }, [acceptedByRestaurantsOrders, userData, restaurantInfo]);
 
   // Load stats on mount and whenever screen comes into focus
   useFocusEffect(
@@ -124,6 +178,15 @@ export default function HomeScreen() {
       const data = await response.json();
       console.log('Fetched acceptedbyrestaurants orders for home stats:', data);
 
+      // 1. Direct Backend Stats Handling: If backend returned pre-calculated stats numbers, use them directly
+      if (response.ok && data && data.todayEarnings !== undefined && data.totalEarnings !== undefined) {
+        setTodayEarnings(Number(data.todayEarnings) || 0);
+        setTodayOrders(Number(data.todayOrders) || 0);
+        setTotalEarnings(Number(data.totalEarnings) || 0);
+        setTotalOrders(Number(data.totalOrders) || 0);
+        return;
+      }
+
       let rawOrdersList = [];
       if (response.ok) {
         if (Array.isArray(data.orders)) {
@@ -141,18 +204,14 @@ export default function HomeScreen() {
           const resStats = await fetchRestaurantStats(targetRestId);
           if (resStats.ok) {
             const statsJson = await resStats.json();
-            if (Array.isArray(statsJson.orders)) {
+            if (statsJson && statsJson.todayEarnings !== undefined && statsJson.totalEarnings !== undefined) {
+              setTodayEarnings(Number(statsJson.todayEarnings) || 0);
+              setTodayOrders(Number(statsJson.todayOrders) || 0);
+              setTotalEarnings(Number(statsJson.totalEarnings) || 0);
+              setTotalOrders(Number(statsJson.totalOrders) || 0);
+              return;
+            } else if (Array.isArray(statsJson.orders)) {
               rawOrdersList = statsJson.orders;
-            } else if (statsJson.success && statsJson.todayEarnings !== undefined && (!targetRestId || targetRestId === '1')) {
-              // If stats JSON returned direct stats numbers from backend
-              // BUT first verify if restaurantId filter applies:
-              if (statsJson.restaurantId && String(statsJson.restaurantId).trim() !== String(targetRestId).trim()) {
-                setTodayEarnings(0);
-                setTodayOrders(0);
-                setTotalEarnings(0);
-                setTotalOrders(0);
-                return;
-              }
             }
           }
         } catch (e) {}
@@ -178,9 +237,7 @@ export default function HomeScreen() {
       let totOrders = matchingOrders.length;
 
       matchingOrders.forEach((ord) => {
-        const earnings = Number(
-          ord.totalPriceAfterCommission ?? ord.netEarnings ?? ord.totalPrice ?? 0
-        );
+        const earnings = calculateOrderNetEarnings(ord);
         totEarnings += earnings;
 
         const ordDateRaw = ord.acceptedAt || ord.orderDate || ord.createdAt;
@@ -195,15 +252,12 @@ export default function HomeScreen() {
             tOrders += 1;
             tEarnings += earnings;
           }
-        } else {
-          tOrders += 1;
-          tEarnings += earnings;
         }
       });
 
-      setTodayEarnings(tEarnings);
+      setTodayEarnings(parseFloat(tEarnings.toFixed(2)));
       setTodayOrders(tOrders);
-      setTotalEarnings(totEarnings);
+      setTotalEarnings(parseFloat(totEarnings.toFixed(2)));
       setTotalOrders(totOrders);
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -225,7 +279,8 @@ export default function HomeScreen() {
       if (storedUser) {
         const parsed = JSON.parse(storedUser);
         setUserData(parsed);
-        const activeBool = parsed.isActive !== undefined ? Boolean(parsed.isActive) : true;
+        const activeBool = extractIsActive(parsed);
+        console.log('[Home Screen] AsyncStorage user data activeBool:', activeBool, 'raw:', parsed?.isActive);
         setIsOpen(activeBool);
         animVal.setValue(activeBool ? 1 : 0);
         targetRestId = String(
@@ -261,12 +316,13 @@ export default function HomeScreen() {
       useNativeDriver: false,
     }).start();
 
-    // 2. Update local AsyncStorage user data
+    // 2. Update local AsyncStorage user data & Redux
     const updatedUserData = {
       ...(userData || {}),
       isActive: nextState,
     };
     setUserData(updatedUserData);
+    dispatch(setUser(updatedUserData));
     try {
       await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData));
     } catch (err) {
@@ -283,17 +339,28 @@ export default function HomeScreen() {
         '';
       const targetPhone = userData?.phone || userData?.mobileNumber || '';
 
-      const response = await updateRestaurantStatus({
-        userId: userData?._id,
+      const payload = {
+        userId: userData?._id || userData?.id,
         restId: targetRestId,
+        restaurantId: targetRestId,
+        restaurant_id: targetRestId,
         phone: targetPhone,
+        mobileNumber: targetPhone,
         isActive: nextState,
-      });
+        is_active: nextState,
+        isOpen: nextState,
+        is_open: nextState,
+        status: nextState ? 'active' : 'closed',
+        active: nextState,
+      };
+
+      console.log('[Status Toggle] Sending API update payload:', payload);
+      const response = await updateRestaurantStatus(payload);
 
       const data = await response.json();
-      console.log('Update status MongoDB response:', data);
+      console.log('[Status Toggle] MongoDB response:', data);
     } catch (err) {
-      console.error('Error updating isActive in MongoDB backend:', err);
+      console.error('Error updating status in MongoDB backend:', err);
     }
   };
 
