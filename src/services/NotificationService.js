@@ -5,10 +5,25 @@ import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notif
 import { registerFCMToken } from '@/services/api';
 import { playOrderSound, stopOrderSoundNative } from './soundService';
 
+const dismissedOrderIds = new Set();
+
+export function isOrderDismissed(orderId) {
+  if (!orderId) return false;
+  return dismissedOrderIds.has(String(orderId));
+}
+
+export function markOrderAsDismissed(orderId) {
+  if (!orderId) return;
+  dismissedOrderIds.add(String(orderId));
+}
+
 // Foreground and Background Notifee event listeners to stop sound immediately when notification is touched, pressed, or dismissed/swiped away
 notifee.onForegroundEvent(async ({ type, detail }) => {
   const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
   if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
+    if (type === EventType.DISMISSED && orderId) {
+      markOrderAsDismissed(orderId);
+    }
     console.log(`[Notifee Foreground] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
     await stopOrderNotificationSound(orderId);
   }
@@ -17,6 +32,9 @@ notifee.onForegroundEvent(async ({ type, detail }) => {
 notifee.onBackgroundEvent(async ({ type, detail }) => {
   const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
   if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
+    if (type === EventType.DISMISSED && orderId) {
+      markOrderAsDismissed(orderId);
+    }
     console.log(`[Notifee Background] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
     await stopOrderNotificationSound(orderId);
   }
@@ -174,6 +192,9 @@ export async function displayOrderNotification(orderData, isForeground = false) 
  */
 export async function stopOrderNotificationSound(orderId) {
   try {
+    if (orderId) {
+      markOrderAsDismissed(orderId);
+    }
     // 1. Stop native Android looping MediaPlayer
     await stopOrderSoundNative();
 

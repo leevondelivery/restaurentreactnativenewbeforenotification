@@ -7,7 +7,7 @@ import {
   insertPendingPayment,
   updateOrderPrepStatus,
 } from '@/services/api';
-import { displayOrderNotification, extractRestId, isOrderNotified, markOrderAsNotified, stopOrderNotificationSound } from '@/services/NotificationService';
+import { displayOrderNotification, extractRestId, isOrderNotified, isOrderDismissed, markOrderAsNotified, stopOrderNotificationSound } from '@/services/NotificationService';
 import { playOrderSound } from '@/services/soundService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
@@ -191,6 +191,36 @@ export const OrdersProvider = ({ children }) => {
     loadRestaurantInfo();
   }, [loadRestaurantInfo]);
 
+  // Instantly re-hydrate cached orders from AsyncStorage on app launch (0ms display)
+  useEffect(() => {
+    (async () => {
+      try {
+        const [cAccepted, cTrack, cIncoming] = await Promise.all([
+          AsyncStorage.getItem('cached_accepted_orders'),
+          AsyncStorage.getItem('cached_tracker_orders'),
+          AsyncStorage.getItem('cached_incoming_orders'),
+        ]);
+        if (cAccepted) {
+          const parsed = JSON.parse(cAccepted);
+          if (Array.isArray(parsed) && parsed.length > 0) setOrders(parsed);
+        }
+        if (cTrack) {
+          const parsed = JSON.parse(cTrack);
+          if (Array.isArray(parsed) && parsed.length > 0) setTrackerOrders(parsed);
+        }
+        if (cIncoming) {
+          const parsedInc = JSON.parse(cIncoming);
+          if (Array.isArray(parsedInc) && parsedInc.length > 0) {
+            setIncomingOrders(parsedInc);
+            setIncomingCount(parsedInc.length);
+          }
+        }
+      } catch (e) {
+        console.warn('OrdersContext: Error loading cached orders from AsyncStorage:', e);
+      }
+    })();
+  }, []);
+
   // Fetch both accepted orders and incoming orders from API
   const fetchGlobalOrders = useCallback(async (isPolling = false) => {
     if (!isPolling) {
@@ -221,23 +251,16 @@ export const OrdersProvider = ({ children }) => {
         if (!isPolling) {
           setLoading(false);
         }
-        setOrders([]);
-        setTrackerOrders([]);
-        setIncomingOrders([]);
-        setIncomingCount(0);
-        try {
-          stopOrderNotificationSound();
-        } catch (e) {}
         return;
       }
 
-      let acceptedOrdersData = [];
-      let rawTrack = [];
+      let acceptedOrdersData = null;
+      let rawTrack = null;
       let incomingData = null;
 
       try {
         const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 4000);
+        const tid = setTimeout(() => controller.abort(), 12000); // 12-second timeout
 
         const [resAccepted, resTrack, resIncoming] = await Promise.allSettled([
           fetchAcceptedOrders(restId, controller.signal),
@@ -270,50 +293,56 @@ export const OrdersProvider = ({ children }) => {
         // Parallel fetch error fallback
       }
 
-      const filteredAccepted = acceptedOrdersData.filter((o) => {
-        if (!o) return false;
-        const oRestId = String(
-          o.restaurantId ||
-          o.restId ||
-          o.restaurant_id ||
-          o.storeId ||
-          o.vendorId ||
-          (o.restaurant && (typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant)) ||
-          (o.restaurantDetails && (typeof o.restaurantDetails === 'object' ? (o.restaurantDetails.restId || o.restaurantDetails.id || o.restaurantDetails._id) : '')) ||
-          ''
-        ).trim();
+      if (Array.isArray(acceptedOrdersData)) {
+        const filteredAccepted = acceptedOrdersData.filter((o) => {
+          if (!o) return false;
+          const oRestId = String(
+            o.restaurantId ||
+            o.restId ||
+            o.restaurant_id ||
+            o.storeId ||
+            o.vendorId ||
+            (o.restaurant && (typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant)) ||
+            (o.restaurantDetails && (typeof o.restaurantDetails === 'object' ? (o.restaurantDetails.restId || o.restaurantDetails.id || o.restaurantDetails._id) : '')) ||
+            ''
+          ).trim();
 
-        if (oRestId && restId) {
-          return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
-        }
-        return !restId;
-      });
+          if (oRestId && restId) {
+            return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
+          }
+          return !restId;
+        });
 
-      setOrders(filteredAccepted);
-      filteredAccepted.forEach((o) => {
-        if (o._id) processedOrderIdsRef.current.add(String(o._id));
-        if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
-      });
+        setOrders(filteredAccepted);
+        AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(filteredAccepted)).catch(() => {});
+        filteredAccepted.forEach((o) => {
+          if (o._id) processedOrderIdsRef.current.add(String(o._id));
+          if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
+        });
+      }
 
-      const filteredTrack = rawTrack.filter((o) => {
-        if (!o) return false;
-        const oRestId = String(
-          o.restaurantId ||
-          o.restId ||
-          o.restaurant_id ||
-          o.storeId ||
-          o.vendorId ||
-          (o.restaurant && typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant) ||
-          ''
-        ).trim();
-        if (restId) {
-          return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
-        }
-        return true;
-      });
-      setTrackerOrders(filteredTrack);
+      if (Array.isArray(rawTrack)) {
+        const filteredTrack = rawTrack.filter((o) => {
+          if (!o) return false;
+          const oRestId = String(
+            o.restaurantId ||
+            o.restId ||
+            o.restaurant_id ||
+            o.storeId ||
+            o.vendorId ||
+            (o.restaurant && typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant) ||
+            ''
+          ).trim();
+          if (restId) {
+            return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
+          }
+          return true;
+        });
+        setTrackerOrders(filteredTrack);
+        AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(filteredTrack)).catch(() => {});
+      }
 
-      if (Array.isArray(incomingData) && incomingData.length > 0) {
+      if (Array.isArray(incomingData)) {
         // Filter by restaurantId match and filter out any orders processed locally
         const filteredIncoming = incomingData.filter((o) => {
           if (restId) {
@@ -346,7 +375,8 @@ export const OrdersProvider = ({ children }) => {
         });
 
         // Ensure continuous in-app sound loop plays until all incoming orders are accepted or rejected
-        if (filteredIncoming.length > 0) {
+        const activeRinging = filteredIncoming.filter((o) => !isOrderDismissed(o._id || o.orderId));
+        if (activeRinging.length > 0) {
           playOrderSound();
         } else {
           stopOrderNotificationSound();
@@ -358,6 +388,7 @@ export const OrdersProvider = ({ children }) => {
 
         setIncomingOrders(filteredIncoming);
         setIncomingCount(filteredIncoming.length);
+        AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(filteredIncoming)).catch(() => {});
       } else {
         stopOrderNotificationSound();
         setIncomingOrders((prev) => {
@@ -414,23 +445,26 @@ export const OrdersProvider = ({ children }) => {
     setIncomingCount((prev) => prev + 1);
   }, []);
 
-  // Reject Order Flow
+  // Reject Order Flow - Instant 0ms UI Response
   const rejectOrder = useCallback(
     async (orderId) => {
       try {
         const idStr = String(orderId);
         processedOrderIdsRef.current.add(idStr);
 
-        try {
-          await apiRejectOrder(orderId, undefined, undefined);
-        } catch (err) {
-          console.warn('OrdersContext: rejectOrder API call warning:', err);
-        }
-
-        // Locally update state & stop ringing sound
+        // 1. Immediately stop sound & update local UI state (0ms instant response)
         stopOrderNotificationSound(orderId);
-        setIncomingOrders((prev) => prev.filter((o) => String(o.orderId || o._id) !== idStr));
-        setIncomingCount((prev) => Math.max(0, prev - 1));
+        setIncomingOrders((prev) => {
+          const next = prev.filter((o) => String(o.orderId || o._id) !== idStr);
+          AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(next)).catch(() => {});
+          setIncomingCount(next.length);
+          return next;
+        });
+
+        // 2. Fire backend API call asynchronously in background
+        apiRejectOrder(orderId, undefined, undefined).catch((err) => {
+          console.warn('OrdersContext: background apiRejectOrder warning:', err);
+        });
 
         return { success: true };
       } catch (err) {
@@ -441,7 +475,7 @@ export const OrdersProvider = ({ children }) => {
     []
   );
 
-  // Accept Order & Preparation Time Flow
+  // Accept Order & Preparation Time Flow - Instant 0ms UI Response
   const acceptOrder = useCallback(
     async (targetOrder, prepMins) => {
       try {
@@ -459,7 +493,6 @@ export const OrdersProvider = ({ children }) => {
         processedOrderIdsRef.current.add(idStr);
         if (altIdStr) processedOrderIdsRef.current.add(altIdStr);
 
-        // Read restaurantId & restaurantName fresh from AsyncStorage
         let asyncRestId = restaurantInfo.restId || '';
         let asyncRestName = targetOrder.restaurantName || restaurantInfo.address || '';
         try {
@@ -510,16 +543,6 @@ export const OrdersProvider = ({ children }) => {
           isReady: isReady,
         };
 
-        // 1. Fire accept-order — errors here do NOT block pendingpayments
-        try {
-          await apiAcceptOrder(payload);
-        } catch (err) {
-          console.warn('OrdersContext: acceptOrder API call warning:', err);
-        }
-
-        // grossTotal = totalPrice (raw order amount before commission)
-        // grandTotal = totalPriceAfterCommission sent by backend (what restaurant earns)
-        // totalCommissionCut = the commission amount deducted (what platform takes)
         const grossTotal = Number(targetOrder.totalPrice || 0);
         const commissionRate = Number(
           targetOrder.commissionRate || restaurantInfo.commission || 0
@@ -535,29 +558,14 @@ export const OrdersProvider = ({ children }) => {
         const pendingPayload = {
           restaurantId: String(asyncRestId),
           restaurantName: asyncRestName,
-          grossTotal,   // totalPrice from the order
-          grandTotal,   // totalPriceAfterCommission from the order (after commission deduction)
+          grossTotal,
+          grandTotal,
           commissionRate,
           totalCommissionCut,
           date: acceptedAtStr,
           status: 'Pending Clearance',
         };
 
-        console.log('pendingpayments payload being sent:', JSON.stringify(pendingPayload));
-
-        try {
-          const ppRes = await insertPendingPayment(pendingPayload);
-          const ppData = await ppRes.json();
-          if (!ppRes.ok) {
-            console.error('pendingpayments FAILED — HTTP', ppRes.status, JSON.stringify(ppData));
-          } else {
-            console.log('pendingpayments SUCCESS:', ppData);
-          }
-        } catch (ppErr) {
-          console.error('pendingpayments ERROR (network/timeout):', ppErr.message, '\nPayload was:', JSON.stringify(pendingPayload));
-        }
-
-        // Create accepted order record locally for immediate feedback
         const newlyAcceptedOrder = {
           ...targetOrder,
           acceptedAt: acceptedAtStr,
@@ -570,14 +578,49 @@ export const OrdersProvider = ({ children }) => {
           isReady: isReady,
         };
 
-        setOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
-        setTrackerOrders((prev) => [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)]);
-
-        // Locally remove from incoming list & stop ringing sound
+        // 1. Immediately stop sound & update local UI state (0ms instant response)
         stopOrderNotificationSound(orderIdVal);
-        stopOrderNotificationSound(altIdStr);
-        setIncomingOrders((prev) => prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o.orderId || '') !== altIdStr));
-        setIncomingCount((prev) => Math.max(0, prev - 1));
+        if (altIdStr) stopOrderNotificationSound(altIdStr);
+
+        setOrders((prev) => {
+          const next = [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)];
+          AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+
+        setTrackerOrders((prev) => {
+          const next = [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)];
+          AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+
+        setIncomingOrders((prev) => {
+          const next = prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o.orderId || '') !== altIdStr);
+          AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(next)).catch(() => {});
+          setIncomingCount(next.length);
+          return next;
+        });
+
+        // 2. Fire backend API calls asynchronously in background
+        (async () => {
+          try {
+            await apiAcceptOrder(payload);
+          } catch (err) {
+            console.warn('OrdersContext: background apiAcceptOrder warning:', err);
+          }
+
+          try {
+            const ppRes = await insertPendingPayment(pendingPayload);
+            const ppData = await ppRes.json();
+            if (!ppRes.ok) {
+              console.error('pendingpayments FAILED — HTTP', ppRes.status, JSON.stringify(ppData));
+            } else {
+              console.log('pendingpayments SUCCESS:', ppData);
+            }
+          } catch (ppErr) {
+            console.error('pendingpayments ERROR (network/timeout):', ppErr.message);
+          }
+        })();
 
         return { success: true };
       } catch (err) {
@@ -712,7 +755,7 @@ export const OrdersProvider = ({ children }) => {
     };
   }, [orders, markOrderAsReady]);
 
-  // Setup 5-second background polling loop
+  // Setup 3-second background polling loop for fast incoming order detection
   useEffect(() => {
     loadRestaurantInfo().then(() => {
       fetchGlobalOrders(false);
@@ -720,7 +763,7 @@ export const OrdersProvider = ({ children }) => {
 
     pollingTimerRef.current = setInterval(() => {
       fetchGlobalOrders(true);
-    }, 5000);
+    }, 3000); // 3-second fast polling
 
     return () => {
       if (pollingTimerRef.current) {
@@ -729,28 +772,33 @@ export const OrdersProvider = ({ children }) => {
     };
   }, [loadRestaurantInfo, fetchGlobalOrders]);
 
-  // Manage in-app native looping notification sound based on incomingOrders state
+  // Manage in-app native looping notification sound based on incomingOrders state (ignoring dismissed orders)
   useEffect(() => {
-    if (incomingOrders.length > 0) {
+    const activeRinging = incomingOrders.filter((o) => !isOrderDismissed(o._id || o.orderId));
+    if (activeRinging.length > 0) {
       if (AppState.currentState === 'active') {
         playOrderSound();
       }
     } else {
       stopOrderNotificationSound();
     }
-  }, [incomingOrders.length]);
+  }, [incomingOrders]);
 
-  // When app returns to active foreground and incoming orders exist, resume looping sound
+  // When app returns to active foreground: immediately poll fresh data & update ringing sound
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active' && incomingOrders.length > 0) {
-        playOrderSound();
+      if (nextAppState === 'active') {
+        fetchGlobalOrders(true);
+        const activeRinging = incomingOrders.filter((o) => !isOrderDismissed(o._id || o.orderId));
+        if (activeRinging.length > 0) {
+          playOrderSound();
+        }
       } else if (nextAppState !== 'active') {
         stopOrderNotificationSound();
       }
     });
     return () => sub.remove();
-  }, [incomingOrders.length]);
+  }, [incomingOrders, fetchGlobalOrders]);
 
   return (
     <OrdersContext.Provider
@@ -788,3 +836,5 @@ export const useOrders = () => {
 };
 
 export default OrdersContext;
+
+
