@@ -21,6 +21,36 @@ import { getDisplayOrderId, getEffectiveCommissionRate } from '../orders';
 
 import './notifications.css';
 
+// Helper to extract a fixed, static creation timestamp for an incoming order
+const getOrderCreationDate = (order) => {
+  if (!order) return new Date();
+
+  const rawDate =
+    order.createdAt ||
+    order.orderDate ||
+    order.date ||
+    order.created_at ||
+    order.acceptedAt ||
+    order.timestamp;
+
+  if (rawDate) {
+    const parsed = new Date(rawDate);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  const idStr = String(order._id || order.orderId || '').trim();
+  if (/^[0-9a-fA-F]{24}$/.test(idStr)) {
+    const timestamp = parseInt(idStr.substring(0, 8), 16) * 1000;
+    const parsed = new Date(timestamp);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+
+  if (!order._fixedFallbackDate) {
+    order._fixedFallbackDate = new Date();
+  }
+  return order._fixedFallbackDate;
+};
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const { incomingOrders, acceptOrder: contextAcceptOrder, rejectOrder: contextRejectOrder, fetchGlobalOrders, loading, restaurantInfo } = useOrders();
@@ -175,17 +205,16 @@ export default function NotificationsScreen() {
             const customerName = order.userName || order.customerName || 'Customer';
             const paymentStatus = order.paymentStatus || 'Paid';
 
-            const formattedDate = order.createdAt
-              ? new Date(order.createdAt).toLocaleString('en-US', {
-                  month: 'numeric',
-                  day: 'numeric',
-                  year: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  second: '2-digit',
-                  hour12: true,
-                })
-              : new Date().toLocaleString();
+            const orderDateObj = getOrderCreationDate(order);
+            const formattedDate = orderDateObj.toLocaleString('en-US', {
+              month: 'numeric',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true,
+            });
 
             let itemsRaw = [];
             if (Array.isArray(order.items)) {

@@ -322,22 +322,46 @@ export const OrdersProvider = ({ children }) => {
       }
 
       if (Array.isArray(rawTrack)) {
-        const filteredTrack = rawTrack.filter((o) => {
-          if (!o) return false;
-          const oRestId = String(
-            o.restaurantId ||
-            o.restId ||
-            o.restaurant_id ||
-            o.storeId ||
-            o.vendorId ||
-            (o.restaurant && typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant) ||
-            ''
-          ).trim();
-          if (restId) {
-            return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
-          }
-          return true;
-        });
+        const filteredTrack = rawTrack
+          .map((o) => {
+            if (!o) return o;
+            const oId = String(o._id || o.orderId || '').trim();
+            // If acceptedOrders (from acceptedorders collection) is updated to Ready, ensure tracker is in sync
+            const accMatch = Array.isArray(acceptedOrdersData)
+              ? acceptedOrdersData.find((acc) => String(acc._id || acc.orderId || '').trim() === oId)
+              : null;
+            if (accMatch) {
+              const accStatus = String(accMatch.status || accMatch.orderStatus || '').toLowerCase();
+              if (accStatus === 'ready' || accMatch.isReady || Number(accMatch.preparationTime ?? accMatch.prepTime) === 0) {
+                return {
+                  ...o,
+                  status: 'Ready',
+                  orderStatus: 'Ready',
+                  isReady: true,
+                  preparationTime: 0,
+                  prepTime: 0,
+                  remainingPrepTimeMins: 0,
+                };
+              }
+            }
+            return o;
+          })
+          .filter((o) => {
+            if (!o) return false;
+            const oRestId = String(
+              o.restaurantId ||
+              o.restId ||
+              o.restaurant_id ||
+              o.storeId ||
+              o.vendorId ||
+              (o.restaurant && typeof o.restaurant === 'object' ? (o.restaurant.restId || o.restaurant.id || o.restaurant._id) : o.restaurant) ||
+              ''
+            ).trim();
+            if (restId) {
+              return oRestId.toLowerCase() === String(restId).trim().toLowerCase();
+            }
+            return true;
+          });
         setTrackerOrders(filteredTrack);
         AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(filteredTrack)).catch(() => {});
       }
@@ -427,7 +451,9 @@ export const OrdersProvider = ({ children }) => {
         } catch (e) {}
       }
 
+      const rawDate = orderData.createdAt || orderData.orderDate || orderData.date || orderData.created_at || orderData.acceptedAt || orderData.timestamp;
       const normalizedOrder = {
+        ...orderData,
         _id: orderId,
         orderId: orderId,
         grandTotal: orderData.grandTotal || orderData.totalPrice || orderData.amount || '0',
@@ -435,8 +461,7 @@ export const OrdersProvider = ({ children }) => {
         userName: orderData.userName || orderData.customerName || orderData.name || 'Customer',
         userPhone: orderData.userPhone || orderData.phone || orderData.mobileNumber || '',
         items: Array.isArray(itemsParsed) ? itemsParsed : [],
-        createdAt: orderData.createdAt || new Date().toISOString(),
-        ...orderData,
+        createdAt: rawDate || new Date().toISOString(),
       };
 
       return [normalizedOrder, ...prev];
@@ -710,7 +735,7 @@ export const OrdersProvider = ({ children }) => {
       for (const ord of orders) {
         if (!ord) continue;
         const statusVal = String(ord.status || ord.orderStatus || '').toLowerCase();
-        if (statusVal === 'ready' || ord.isReady) continue;
+        if (statusVal === 'ready' || ord.isReady || Number(ord.preparationTime ?? ord.prepTime) === 0) continue;
 
         const acceptedAtMs = ord.acceptedAt ? new Date(ord.acceptedAt).getTime() : nowMs;
         const prepMins = Number(ord.preparationTime ?? ord.prepTime ?? 15);

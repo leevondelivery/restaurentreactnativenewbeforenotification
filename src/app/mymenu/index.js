@@ -82,17 +82,26 @@ export default function MyMenuScreen() {
     }
   };
 
-  const handleToggleItemStatus = async (item, index) => {
-    const newStatus = !item.itemStatus;
+  const handleToggleItemStatus = async (targetItem) => {
+    if (!targetItem) return;
+    const newStatus = !targetItem.itemStatus;
 
-    // 1. Optimistic UI update
-    const updatedItems = [...menuItems];
-    updatedItems[index] = { ...item, itemStatus: newStatus };
-    setMenuItems(updatedItems);
+    // 1. Optimistic UI update by item identity / _id
+    setMenuItems((prevItems) =>
+      prevItems.map((item) => {
+        const isMatch =
+          (item._id && targetItem._id && item._id === targetItem._id) ||
+          item === targetItem;
+        if (isMatch) {
+          return { ...item, itemStatus: newStatus };
+        }
+        return item;
+      })
+    );
 
     // 2. Update MongoDB restuarents collection via API
     try {
-      const response = await apiUpdateMenuItemStatus(item.collectionName || collectionName, item._id, newStatus);
+      const response = await apiUpdateMenuItemStatus(targetItem.collectionName || collectionName, targetItem._id, newStatus);
 
       const data = await response.json();
       console.log('Update itemStatus response:', data);
@@ -189,7 +198,7 @@ export default function MyMenuScreen() {
                   {/* Custom Styled Switch Toggle for itemStatus */}
                   <TouchableOpacity
                     activeOpacity={0.85}
-                    onPress={() => handleToggleItemStatus(item, index)}
+                    onPress={() => handleToggleItemStatus(item)}
                     style={[
                       styles.toggleSwitchPill,
                       item.itemStatus ? styles.toggleActivePill : styles.toggleInactivePill,
