@@ -7,7 +7,7 @@ import {
   insertPendingPayment,
   updateOrderPrepStatus,
 } from '@/services/api';
-import { displayOrderNotification, extractRestId, isOrderNotified, isOrderDismissed, markOrderAsNotified, stopOrderNotificationSound } from '@/services/NotificationService';
+import { displayOrderNotification, extractRestId, isOrderDismissed, isOrderNotified, markOrderAsNotified, stopOrderNotificationSound } from '@/services/NotificationService';
 import { playOrderSound } from '@/services/soundService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
@@ -273,21 +273,21 @@ export const OrdersProvider = ({ children }) => {
           try {
             const json = await resAccepted.value.json();
             acceptedOrdersData = json.orders || json.data || (Array.isArray(json) ? json : []);
-          } catch (e) {}
+          } catch (e) { }
         }
 
         if (resTrack.status === 'fulfilled' && resTrack.value && resTrack.value.ok) {
           try {
             const jsonTrack = await resTrack.value.json();
             rawTrack = jsonTrack.orders || jsonTrack.data || (Array.isArray(jsonTrack) ? jsonTrack : []);
-          } catch (e) {}
+          } catch (e) { }
         }
 
         if (resIncoming.status === 'fulfilled' && resIncoming.value && resIncoming.value.ok) {
           try {
             const jsonIncoming = await resIncoming.value.json();
             incomingData = jsonIncoming.orders || jsonIncoming.incomingOrders || (Array.isArray(jsonIncoming) ? jsonIncoming : null);
-          } catch (e) {}
+          } catch (e) { }
         }
       } catch (err) {
         // Parallel fetch error fallback
@@ -314,7 +314,7 @@ export const OrdersProvider = ({ children }) => {
         });
 
         setOrders(filteredAccepted);
-        AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(filteredAccepted)).catch(() => {});
+        AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(filteredAccepted)).catch(() => { });
         filteredAccepted.forEach((o) => {
           if (o._id) processedOrderIdsRef.current.add(String(o._id));
           if (o.orderId) processedOrderIdsRef.current.add(String(o.orderId));
@@ -363,7 +363,7 @@ export const OrdersProvider = ({ children }) => {
             return true;
           });
         setTrackerOrders(filteredTrack);
-        AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(filteredTrack)).catch(() => {});
+        AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(filteredTrack)).catch(() => { });
       }
 
       if (Array.isArray(incomingData)) {
@@ -412,7 +412,7 @@ export const OrdersProvider = ({ children }) => {
 
         setIncomingOrders(filteredIncoming);
         setIncomingCount(filteredIncoming.length);
-        AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(filteredIncoming)).catch(() => {});
+        AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(filteredIncoming)).catch(() => { });
       } else {
         stopOrderNotificationSound();
         setIncomingOrders((prev) => {
@@ -448,7 +448,7 @@ export const OrdersProvider = ({ children }) => {
       if (typeof itemsParsed === 'string') {
         try {
           itemsParsed = JSON.parse(itemsParsed);
-        } catch (e) {}
+        } catch (e) { }
       }
 
       const rawDate = orderData.createdAt || orderData.orderDate || orderData.date || orderData.created_at || orderData.acceptedAt || orderData.timestamp;
@@ -481,7 +481,7 @@ export const OrdersProvider = ({ children }) => {
         stopOrderNotificationSound(orderId);
         setIncomingOrders((prev) => {
           const next = prev.filter((o) => String(o.orderId || o._id) !== idStr);
-          AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(next)).catch(() => {});
+          AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(next)).catch(() => { });
           setIncomingCount(next.length);
           return next;
         });
@@ -609,19 +609,19 @@ export const OrdersProvider = ({ children }) => {
 
         setOrders((prev) => {
           const next = [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)];
-          AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(next)).catch(() => {});
+          AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(next)).catch(() => { });
           return next;
         });
 
         setTrackerOrders((prev) => {
           const next = [newlyAcceptedOrder, ...prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o._id || o.orderId) !== altIdStr)];
-          AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(next)).catch(() => {});
+          AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(next)).catch(() => { });
           return next;
         });
 
         setIncomingOrders((prev) => {
           const next = prev.filter((o) => String(o._id || o.orderId) !== idStr && String(o.orderId || '') !== altIdStr);
-          AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(next)).catch(() => {});
+          AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(next)).catch(() => { });
           setIncomingCount(next.length);
           return next;
         });

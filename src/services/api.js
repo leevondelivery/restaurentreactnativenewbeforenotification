@@ -10,7 +10,24 @@ const DEFAULT_TIMEOUT_MS = 8000;
 /** Abortable fetch helper with built-in timeout */
 const fetchWithTimeout = (url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) => {
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), timeoutMs);
+  const tid = setTimeout(() => {
+    try {
+      controller.abort();
+    } catch (_) {}
+  }, timeoutMs);
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', () => {
+        try {
+          controller.abort();
+        } catch (_) {}
+      }, { once: true });
+    }
+  }
+
   return fetch(url, { ...options, signal: controller.signal })
     .finally(() => clearTimeout(tid));
 };
@@ -30,7 +47,7 @@ export const fetchAcceptedOrders = (restaurantId, signal) =>
   fetch(BASE_URL + '/api/orders/acceptedorders?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
 
 export const fetchAcceptedByRestaurants = (restaurantId, signal) =>
-  fetch(BASE_URL + '/api/orders/acceptedbyrestorents?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
+  fetchWithTimeout(BASE_URL + '/api/orders/acceptedbyrestorents?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal }, 10000);
 
 export const fetchIncomingOrders = (restaurantId, signal) =>
   fetch(BASE_URL + '/api/orders/incoming?restaurantId=' + encodeURIComponent(restaurantId || ''), { signal });
@@ -63,7 +80,7 @@ export const updateOrderPrepStatus = async (payload) => {
       body: JSON.stringify(payload),
     });
     if (res.ok) return res;
-  } catch (e) {}
+  } catch (e) { }
 
   return fetchWithTimeout(BASE_URL + '/api/orders/accept-order', {
     method: 'POST',
@@ -95,6 +112,46 @@ export const updateRestaurantStatus = (payload) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+
+export const fetchRestaurantStatus = async (restaurantId, phone, userId, signal) => {
+  try {
+    const res = await fetchWithTimeout(BASE_URL + '/api/users', { signal }, 8000);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const users = Array.isArray(data.users) ? data.users : [];
+    const targetRestId = String(restaurantId || '').trim().toLowerCase();
+    const targetPhone = String(phone || '').trim().toLowerCase();
+    const targetUserId = String(userId || '').trim().toLowerCase();
+
+    const match = users.find((u) => {
+      const uRestId = String(u.restId || u.restaurantId || '').trim().toLowerCase();
+      const uId = String(u._id || u.id || '').trim().toLowerCase();
+      const uPhone = String(u.phone || u.mobileNumber || '').trim().toLowerCase();
+
+      if (targetRestId && (uRestId === targetRestId || uId === targetRestId)) return true;
+      if (targetUserId && (uId === targetUserId || uRestId === targetUserId)) return true;
+      if (targetPhone && uPhone === targetPhone) return true;
+      return false;
+    });
+
+    if (match) {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          isActive: match.isActive,
+          user: match,
+        }),
+        isActive: match.isActive,
+        user: match,
+      };
+    }
+  } catch (e) {
+    // Routine polling network hiccup; return null silently and retry on next tick
+    return null;
+  }
+  return null;
+};
 
 export const updateRestaurantTimings = (payload) =>
   fetchWithTimeout(BASE_URL + '/api/restaurant/timings', {

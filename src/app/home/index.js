@@ -1,18 +1,17 @@
+import { useOrders } from '@/context/OrdersContext';
+import { fetchAcceptedByRestaurants, fetchRestaurantStats, fetchRestaurantStatus, updateRestaurantStatus } from '@/services/api';
+import { setUser } from '@/store/userSlice';
+import { extractIsActive, extractIsActiveStrict } from '@/utils/statusUtils';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { setUser } from '@/store/userSlice';
-import { extractIsActive } from '@/utils/statusUtils';
-import { useOrders } from '@/context/OrdersContext';
-import { fetchAcceptedByRestaurants, fetchRestaurantStats, updateRestaurantStatus } from '@/services/api';
-import { getEffectiveCommissionRate } from '../orders';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   Easing,
   Image,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -20,8 +19,9 @@ import {
   Text,
   TouchableOpacity,
   View,
-  Platform,
 } from 'react-native';
+import { useDispatch, useSelector } from 'react-redux';
+import { getEffectiveCommissionRate } from '../orders';
 
 import './home.css';
 
@@ -32,9 +32,7 @@ export default function HomeScreen() {
   const { acceptedByRestaurantsOrders, fetchGlobalOrders, restaurantInfo } = useOrders();
   const [userData, setUserData] = useState(reduxUserData || null);
   const [isOpen, setIsOpen] = useState(false);
-
-  // Animated value: 1 = OPEN, 0 = CLOSED
-  const animVal = useRef(new Animated.Value(0)).current;
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
   // Real stats loaded from acceptedbyrestorents collection by restaurantId
   const [todayEarnings, setTodayEarnings] = useState(0);
@@ -43,19 +41,55 @@ export default function HomeScreen() {
   const [totalOrders, setTotalOrders] = useState(0);
   const [loadingStats, setLoadingStats] = useState(false);
 
+  // Animated value: 1 = OPEN, 0 = CLOSED
+  const animVal = useRef(new Animated.Value(0)).current;
+  const isUpdatingStatusRef = useRef(false);
+  const isOpenRef = useRef(false);
+  const userDataRef = useRef(userData);
+
+  useEffect(() => {
+    isUpdatingStatusRef.current = isUpdatingStatus;
+  }, [isUpdatingStatus]);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    userDataRef.current = userData;
+  }, [userData]);
+
+  const syncToggleState = useCallback((targetActiveBool, animate = true) => {
+    setIsOpen(targetActiveBool);
+    isOpenRef.current = targetActiveBool;
+    if (animate) {
+      Animated.timing(animVal, {
+        toValue: targetActiveBool ? 1 : 0,
+        duration: 220,
+        easing: Easing.bezier(0.4, 0.0, 0.2, 1),
+        useNativeDriver: false,
+      }).start();
+    } else {
+      animVal.setValue(targetActiveBool ? 1 : 0);
+    }
+  }, [animVal]);
+
   // Instantly sync user profile data from Redux if available
   useEffect(() => {
-    if (reduxUserData) {
-      setUserData(reduxUserData);
-      const activeBool = extractIsActive(reduxUserData);
+    if (reduxUserData && !isUpdatingStatusRef.current) {
+      const activeBool = extractIsActiveStrict(reduxUserData);
       console.log('[Home Screen] Redux user data activeBool:', activeBool, 'raw:', reduxUserData?.isActive);
-      setIsOpen(activeBool);
-      animVal.setValue(activeBool ? 1 : 0);
+      if (JSON.stringify(reduxUserData) !== JSON.stringify(userDataRef.current)) {
+        setUserData(reduxUserData);
+      }
+      if (typeof activeBool === 'boolean' && activeBool !== isOpenRef.current) {
+        syncToggleState(activeBool, false);
+      }
     }
-  }, [reduxUserData]);
+  }, [reduxUserData, syncToggleState]);
 
   // Helper to calculate exact Net Earnings after restaurant commission cut for an order
-  const calculateOrderNetEarnings = (ord) => {
+  const calculateOrderNetEarnings = useCallback((ord) => {
     if (!ord || typeof ord !== 'object') return 0;
 
     // 1. Determine effective commission percentage for this order & restaurant
@@ -72,7 +106,7 @@ export default function HomeScreen() {
       try {
         const parsed = JSON.parse(ord.items);
         if (Array.isArray(parsed)) itemsRaw = parsed;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (itemsRaw.length > 0) {
@@ -106,7 +140,7 @@ export default function HomeScreen() {
     }
 
     return grossTotal;
-  };
+  }, [userData, restaurantInfo]);
 
   // Compute stats instantly from background orders context
   useEffect(() => {
@@ -156,16 +190,9 @@ export default function HomeScreen() {
     setTodayOrders(tOrders);
     setTotalEarnings(parseFloat(totEarnings.toFixed(2)));
     setTotalOrders(totOrders);
-  }, [acceptedByRestaurantsOrders, userData, restaurantInfo]);
+  }, [acceptedByRestaurantsOrders, userData, restaurantInfo, calculateOrderNetEarnings]);
 
-  // Load stats on mount and whenever screen comes into focus
-  useFocusEffect(
-    useCallback(() => {
-      loadUserData();
-    }, [])
-  );
-
-  const fetchStats = async (targetRestId) => {
+  const fetchStats = useCallback(async (targetRestId) => {
     try {
       setLoadingStats(true);
 
@@ -214,7 +241,7 @@ export default function HomeScreen() {
               rawOrdersList = statsJson.orders;
             }
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       // STRICT FILTER: Compare restaurant ID of each order with targetRestId
@@ -261,14 +288,16 @@ export default function HomeScreen() {
       setTotalOrders(totOrders);
     } catch (err) {
       if (err.name !== 'AbortError') {
-        console.error('Error fetching home stats:', err);
+        console.warn('Notice: Background stats fetch will retry:', err?.message || err);
       }
     } finally {
       setLoadingStats(false);
     }
-  };
+  }, [calculateOrderNetEarnings]);
 
-  const loadUserData = async () => {
+  const loadUserData = useCallback(async () => {
+    if (isUpdatingStatusRef.current) return;
+
     try {
       // Extend 30-day session countdown whenever app is used
       await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
@@ -278,11 +307,14 @@ export default function HomeScreen() {
 
       if (storedUser) {
         const parsed = JSON.parse(storedUser);
-        setUserData(parsed);
-        const activeBool = extractIsActive(parsed);
+        if (JSON.stringify(parsed) !== JSON.stringify(userDataRef.current)) {
+          setUserData(parsed);
+        }
+        const activeBool = extractIsActiveStrict(parsed);
         console.log('[Home Screen] AsyncStorage user data activeBool:', activeBool, 'raw:', parsed?.isActive);
-        setIsOpen(activeBool);
-        animVal.setValue(activeBool ? 1 : 0);
+        if (typeof activeBool === 'boolean' && activeBool !== isOpenRef.current && !isUpdatingStatusRef.current) {
+          syncToggleState(activeBool, false);
+        }
         targetRestId = String(
           parsed?.restId ||
           parsed?.restaurantId ||
@@ -298,29 +330,134 @@ export default function HomeScreen() {
       }
 
       fetchStats(targetRestId);
+      pollRestaurantStatus();
     } catch (error) {
       console.error('Error loading user data from AsyncStorage:', error);
       fetchStats('');
     }
-  };
+  }, [fetchStats, syncToggleState]);
+
+  const pollRestaurantStatus = useCallback(async () => {
+    if (isUpdatingStatusRef.current) return;
+
+    try {
+      let u = userDataRef.current;
+      const storedRestId = await AsyncStorage.getItem('restId');
+      if (!u || (!u._id && !u.restId && !u.phone)) {
+        const stored = await AsyncStorage.getItem('userData');
+        if (stored) {
+          try { u = JSON.parse(stored); } catch (e) { }
+        }
+      }
+
+      const targetRestId = String(
+        u?.restId ||
+        u?.restaurantId ||
+        u?.restaurant_id ||
+        storedRestId ||
+        ''
+      ).trim();
+      const targetPhone = String(u?.phone || u?.mobileNumber || '').trim();
+      const targetUserId = String(u?._id || u?.id || '').trim();
+
+      if (!targetRestId && !targetPhone && !targetUserId) return;
+
+      const res = await fetchRestaurantStatus(targetRestId, targetPhone, targetUserId);
+      if (res && res.ok) {
+        const data = await res.json();
+        const remoteIsActive = extractIsActiveStrict(data);
+        if (typeof remoteIsActive === 'boolean') {
+          if (remoteIsActive !== isOpenRef.current) {
+            console.log('[Status Poll] Real-time MongoDB status sync:', remoteIsActive);
+            syncToggleState(remoteIsActive, true);
+          }
+          const updatedUserData = {
+            ...(u || {}),
+            ...(data.user || {}),
+            isActive: remoteIsActive,
+            is_active: remoteIsActive,
+            isOpen: remoteIsActive,
+            is_open: remoteIsActive,
+            status: remoteIsActive ? 'active' : 'closed',
+          };
+          setUserData(updatedUserData);
+          dispatch(setUser(updatedUserData));
+          await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData)).catch(() => { });
+        }
+      }
+    } catch (err) {
+      // Periodic background poll silently retries next interval on network glitch
+    }
+  }, [dispatch, syncToggleState]);
+
+  // Load stats on mount and whenever screen comes into focus, with 5s status polling interval
+  useFocusEffect(
+    useCallback(() => {
+      loadUserData();
+      pollRestaurantStatus();
+
+      const timerId = setInterval(() => {
+        pollRestaurantStatus();
+      }, 5000);
+
+      return () => {
+        clearInterval(timerId);
+      };
+    }, [loadUserData, pollRestaurantStatus])
+  );
 
   const handleToggle = async () => {
-    const nextState = !isOpen;
+    if (isUpdatingStatusRef.current) return;
 
-    // 1. Instantly trigger smooth animation
-    setIsOpen(nextState);
-    Animated.timing(animVal, {
-      toValue: nextState ? 1 : 0,
-      duration: 260,
-      easing: Easing.bezier(0.4, 0.0, 0.2, 1),
-      useNativeDriver: false,
-    }).start();
+    const nextState = !isOpenRef.current;
+    setIsUpdatingStatus(true);
+    isUpdatingStatusRef.current = true;
 
-    // 2. Update local AsyncStorage user data & Redux
+    // 1. Instantly trigger smooth 0ms optimistic UI animation & state update
+    syncToggleState(nextState, true);
+
+    // 2. Deep update user data object including all top-level & nested entities
+    const currentU = userDataRef.current || {};
     const updatedUserData = {
-      ...(userData || {}),
+      ...currentU,
       isActive: nextState,
+      is_active: nextState,
+      isOpen: nextState,
+      is_open: nextState,
+      status: nextState ? 'active' : 'closed',
+      active: nextState,
     };
+    if (updatedUserData.user && typeof updatedUserData.user === 'object') {
+      updatedUserData.user = {
+        ...updatedUserData.user,
+        isActive: nextState,
+        is_active: nextState,
+        isOpen: nextState,
+        is_open: nextState,
+        status: nextState ? 'active' : 'closed',
+      };
+    }
+    if (updatedUserData.restaurant && typeof updatedUserData.restaurant === 'object') {
+      updatedUserData.restaurant = {
+        ...updatedUserData.restaurant,
+        isActive: nextState,
+        is_active: nextState,
+        isOpen: nextState,
+        is_open: nextState,
+        status: nextState ? 'active' : 'closed',
+      };
+    }
+    if (updatedUserData.restaurantDetails && typeof updatedUserData.restaurantDetails === 'object') {
+      updatedUserData.restaurantDetails = {
+        ...updatedUserData.restaurantDetails,
+        isActive: nextState,
+        is_active: nextState,
+        isOpen: nextState,
+        is_open: nextState,
+        status: nextState ? 'active' : 'closed',
+      };
+    }
+
     setUserData(updatedUserData);
     dispatch(setUser(updatedUserData));
     try {
@@ -331,21 +468,25 @@ export default function HomeScreen() {
 
     // 3. Update MongoDB restuarentusers collection via API
     try {
+      const storedRestId = await AsyncStorage.getItem('restId');
       const targetRestId =
-        userData?.restId ||
-        userData?.restaurantId ||
-        userData?.restaurant_id ||
-        userData?._id ||
+        currentU?.restId ||
+        currentU?.restaurantId ||
+        currentU?.restaurant_id ||
+        storedRestId ||
+        currentU?._id ||
+        currentU?.id ||
         '';
-      const targetPhone = userData?.phone || userData?.mobileNumber || '';
+      const targetPhone = currentU?.phone || currentU?.mobileNumber || '';
 
       const payload = {
-        userId: userData?._id || userData?.id,
+        userId: currentU?._id || currentU?.id,
         restId: targetRestId,
         restaurantId: targetRestId,
         restaurant_id: targetRestId,
         phone: targetPhone,
         mobileNumber: targetPhone,
+        email: currentU?.email || '',
         isActive: nextState,
         is_active: nextState,
         isOpen: nextState,
@@ -357,10 +498,19 @@ export default function HomeScreen() {
       console.log('[Status Toggle] Sending API update payload:', payload);
       const response = await updateRestaurantStatus(payload);
 
-      const data = await response.json();
-      console.log('[Status Toggle] MongoDB response:', data);
+      if (response && response.ok) {
+        const data = await response.json();
+        console.log('[Status Toggle] MongoDB response:', data);
+        const confirmedIsActive = extractIsActiveStrict(data);
+        if (typeof confirmedIsActive === 'boolean') {
+          syncToggleState(confirmedIsActive, true);
+        }
+      }
     } catch (err) {
       console.error('Error updating status in MongoDB backend:', err);
+    } finally {
+      setIsUpdatingStatus(false);
+      isUpdatingStatusRef.current = false;
     }
   };
 
@@ -373,12 +523,6 @@ export default function HomeScreen() {
   const circleX = animVal.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 142],
-  });
-
-  const openTextOpacity = animVal;
-  const closedTextOpacity = animVal.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0],
   });
 
   return (
@@ -402,19 +546,37 @@ export default function HomeScreen() {
 
         {/* ── OPEN / CLOSED Smooth Sliding Toggle Pill ── */}
         <TouchableOpacity
-          activeOpacity={0.9}
+          activeOpacity={0.85}
           onPress={handleToggle}
+          disabled={isUpdatingStatus}
         >
-          <Animated.View style={[styles.toggleContainer, { backgroundColor: bgColor }]}>
+          <Animated.View
+            style={[
+              styles.toggleContainer,
+              { backgroundColor: isOpen ? '#05B686' : '#E35436' },
+            ]}
+          >
             {/* OPEN Text on Left */}
-            <Animated.View style={[styles.openTextWrapper, { opacity: openTextOpacity }]} pointerEvents="none">
+            <View
+              style={[
+                styles.openTextWrapper,
+                { opacity: isOpen ? 1 : 0 },
+              ]}
+              pointerEvents="none"
+            >
               <Text style={styles.toggleText}>OPEN</Text>
-            </Animated.View>
+            </View>
 
             {/* CLOSED Text on Right */}
-            <Animated.View style={[styles.closedTextWrapper, { opacity: closedTextOpacity }]} pointerEvents="none">
+            <View
+              style={[
+                styles.closedTextWrapper,
+                { opacity: isOpen ? 0 : 1 },
+              ]}
+              pointerEvents="none"
+            >
               <Text style={styles.toggleText}>CLOSED</Text>
-            </Animated.View>
+            </View>
 
             {/* Sliding White Power Circle */}
             <Animated.View
@@ -423,11 +585,18 @@ export default function HomeScreen() {
                 { transform: [{ translateX: circleX }] },
               ]}
             >
-              <Ionicons
-                name="power"
-                size={20}
-                color={isOpen ? '#05B686' : '#E35436'}
-              />
+              {isUpdatingStatus ? (
+                <ActivityIndicator
+                  size="small"
+                  color={isOpen ? '#05B686' : '#E35436'}
+                />
+              ) : (
+                <Ionicons
+                  name="power"
+                  size={20}
+                  color={isOpen ? '#05B686' : '#E35436'}
+                />
+              )}
             </Animated.View>
           </Animated.View>
         </TouchableOpacity>

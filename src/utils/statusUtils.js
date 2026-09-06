@@ -77,3 +77,58 @@ export const extractIsActive = (rootObj) => {
   // Fallback if no operational status field is found
   return false;
 };
+
+/**
+ * Strict version of extractIsActive that returns undefined if NO explicit operational status field is present.
+ * Prevents treating response objects missing operational status fields as implicitly false/closed.
+ */
+export const extractIsActiveStrict = (rootObj) => {
+  if (rootObj === undefined || rootObj === null) return undefined;
+
+  const directVal = parseStatusValue(rootObj);
+  if (directVal !== undefined) return directVal;
+
+  if (typeof rootObj !== 'object') return undefined;
+
+  const candidateObjs = [
+    rootObj?.user,
+    rootObj?.restaurant,
+    rootObj?.restaurantDetails,
+    rootObj?.user?.restaurant,
+    rootObj?.user?.restaurantDetails,
+    rootObj?.data,
+    rootObj,
+  ];
+
+  const statusFields = [
+    'isActive',
+    'isActivestatus',
+    'isActiveStatus',
+    'is_active',
+    'is_active_status',
+    'isOpen',
+    'is_open',
+    'isAcceptingOrders',
+    'is_accepting_orders',
+    'isOpenToday',
+    'isOpenNow',
+    'restaurantStatus',
+    'storeStatus',
+    'activeStatus',
+  ];
+
+  for (const obj of candidateObjs) {
+    if (!obj || typeof obj !== 'object') continue;
+
+    for (const field of statusFields) {
+      if (obj[field] !== undefined && obj[field] !== null) {
+        const parsed = parseStatusValue(obj[field]);
+        if (parsed !== undefined) {
+          return parsed;
+        }
+      }
+    }
+  }
+
+  return undefined;
+};
