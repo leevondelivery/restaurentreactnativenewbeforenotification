@@ -1,16 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Modal,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Linking,
-  Platform,
-  AppState,
-} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import notifee from '@notifee/react-native';
+import { useEffect, useState } from 'react';
+import {
+  AppState,
+  Linking,
+  Modal,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 export default function BatteryOptimizationModal({ visible: forceVisible, onClose }) {
   const [modalVisible, setModalVisible] = useState(false);
@@ -76,7 +76,7 @@ export default function BatteryOptimizationModal({ visible: forceVisible, onClos
       transparent={true}
       animationType="fade"
       hardwareAccelerated={true}
-      onRequestClose={() => {}}
+      onRequestClose={() => { }}
     >
       <View style={styles.overlay}>
         <View style={styles.card}>

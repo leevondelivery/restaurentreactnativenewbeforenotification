@@ -30,8 +30,9 @@ export default function HomeScreen() {
   const router = useRouter();
   const reduxUserData = useSelector((state) => state.user.userData);
   const { acceptedByRestaurantsOrders, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const initialActive = extractIsActiveStrict(reduxUserData) ?? false;
   const [userData, setUserData] = useState(reduxUserData || null);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(initialActive);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
   // Real stats loaded from acceptedbyrestorents collection by restaurantId
@@ -42,10 +43,11 @@ export default function HomeScreen() {
   const [loadingStats, setLoadingStats] = useState(false);
 
   // Animated value: 1 = OPEN, 0 = CLOSED
-  const animVal = useRef(new Animated.Value(0)).current;
+  const animVal = useRef(new Animated.Value(initialActive ? 1 : 0)).current;
   const isUpdatingStatusRef = useRef(false);
-  const isOpenRef = useRef(false);
+  const isOpenRef = useRef(initialActive);
   const userDataRef = useRef(userData);
+  const lastUserToggleTimeRef = useRef(0);
 
   useEffect(() => {
     isUpdatingStatusRef.current = isUpdatingStatus;
@@ -74,16 +76,17 @@ export default function HomeScreen() {
     }
   }, [animVal]);
 
-  // Instantly sync user profile data from Redux if available
+  // Instantly sync user profile data from Redux if available without overriding active user interaction
   useEffect(() => {
-    if (reduxUserData && !isUpdatingStatusRef.current) {
+    if (reduxUserData) {
       const activeBool = extractIsActiveStrict(reduxUserData);
-      console.log('[Home Screen] Redux user data activeBool:', activeBool, 'raw:', reduxUserData?.isActive);
       if (JSON.stringify(reduxUserData) !== JSON.stringify(userDataRef.current)) {
         setUserData(reduxUserData);
       }
-      if (typeof activeBool === 'boolean' && activeBool !== isOpenRef.current) {
-        syncToggleState(activeBool, false);
+      if (Date.now() - lastUserToggleTimeRef.current >= 10000 && !isUpdatingStatusRef.current) {
+        if (typeof activeBool === 'boolean' && activeBool !== isOpenRef.current) {
+          syncToggleState(activeBool, false);
+        }
       }
     }
   }, [reduxUserData, syncToggleState]);
@@ -92,10 +95,11 @@ export default function HomeScreen() {
   const calculateOrderNetEarnings = useCallback((ord) => {
     if (!ord || typeof ord !== 'object') return 0;
 
+    const currentU = userDataRef.current;
     // 1. Determine effective commission percentage for this order & restaurant
     const commRate = getEffectiveCommissionRate(
       ord,
-      userData?.commission ?? restaurantInfo?.commission
+      currentU?.commission ?? restaurantInfo?.commission
     );
 
     // 2. If items exist, compute sum of discounted item prices (matches Orders & Notifications)
@@ -140,7 +144,7 @@ export default function HomeScreen() {
     }
 
     return grossTotal;
-  }, [userData, restaurantInfo]);
+  }, [restaurantInfo]);
 
   // Compute stats instantly from background orders context
   useEffect(() => {
@@ -295,50 +299,10 @@ export default function HomeScreen() {
     }
   }, [calculateOrderNetEarnings]);
 
-  const loadUserData = useCallback(async () => {
-    if (isUpdatingStatusRef.current) return;
-
-    try {
-      // Extend 30-day session countdown whenever app is used
-      await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
-      const storedUser = await AsyncStorage.getItem('userData');
-      const storedRestId = await AsyncStorage.getItem('restId');
-      let targetRestId = '';
-
-      if (storedUser) {
-        const parsed = JSON.parse(storedUser);
-        if (JSON.stringify(parsed) !== JSON.stringify(userDataRef.current)) {
-          setUserData(parsed);
-        }
-        const activeBool = extractIsActiveStrict(parsed);
-        console.log('[Home Screen] AsyncStorage user data activeBool:', activeBool, 'raw:', parsed?.isActive);
-        if (typeof activeBool === 'boolean' && activeBool !== isOpenRef.current && !isUpdatingStatusRef.current) {
-          syncToggleState(activeBool, false);
-        }
-        targetRestId = String(
-          parsed?.restId ||
-          parsed?.restaurantId ||
-          parsed?.restaurant_id ||
-          parsed?._id ||
-          parsed?.id ||
-          ''
-        ).trim();
-      }
-
-      if (!targetRestId && storedRestId) {
-        targetRestId = String(storedRestId).trim();
-      }
-
-      fetchStats(targetRestId);
-      pollRestaurantStatus();
-    } catch (error) {
-      console.error('Error loading user data from AsyncStorage:', error);
-      fetchStats('');
-    }
-  }, [fetchStats, syncToggleState]);
-
   const pollRestaurantStatus = useCallback(async () => {
+    // If currently updating or recently toggled by user, do not poll or override state
     if (isUpdatingStatusRef.current) return;
+    if (Date.now() - lastUserToggleTimeRef.current < 10000) return;
 
     try {
       let u = userDataRef.current;
@@ -363,6 +327,11 @@ export default function HomeScreen() {
       if (!targetRestId && !targetPhone && !targetUserId) return;
 
       const res = await fetchRestaurantStatus(targetRestId, targetPhone, targetUserId);
+
+      // Discard poll result if user manually interacted while fetch was in-flight
+      if (isUpdatingStatusRef.current) return;
+      if (Date.now() - lastUserToggleTimeRef.current < 10000) return;
+
       if (res && res.ok) {
         const data = await res.json();
         const remoteIsActive = extractIsActiveStrict(data);
@@ -372,7 +341,7 @@ export default function HomeScreen() {
             syncToggleState(remoteIsActive, true);
           }
           const updatedUserData = {
-            ...(u || {}),
+            ...(userDataRef.current || u || {}),
             ...(data.user || {}),
             isActive: remoteIsActive,
             is_active: remoteIsActive,
@@ -389,6 +358,52 @@ export default function HomeScreen() {
       // Periodic background poll silently retries next interval on network glitch
     }
   }, [dispatch, syncToggleState]);
+
+  const loadUserData = useCallback(async () => {
+    if (isUpdatingStatusRef.current) return;
+
+    try {
+      // Extend 30-day session countdown whenever app is used
+      await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
+      const storedUser = await AsyncStorage.getItem('userData');
+      const storedRestId = await AsyncStorage.getItem('restId');
+      let targetRestId = '';
+
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        if (JSON.stringify(parsed) !== JSON.stringify(userDataRef.current)) {
+          setUserData(parsed);
+        }
+        const activeBool = extractIsActiveStrict(parsed);
+        if (
+          Date.now() - lastUserToggleTimeRef.current >= 10000 &&
+          typeof activeBool === 'boolean' &&
+          activeBool !== isOpenRef.current &&
+          !isUpdatingStatusRef.current
+        ) {
+          syncToggleState(activeBool, false);
+        }
+        targetRestId = String(
+          parsed?.restId ||
+          parsed?.restaurantId ||
+          parsed?.restaurant_id ||
+          parsed?._id ||
+          parsed?.id ||
+          ''
+        ).trim();
+      }
+
+      if (!targetRestId && storedRestId) {
+        targetRestId = String(storedRestId).trim();
+      }
+
+      fetchStats(targetRestId);
+      pollRestaurantStatus();
+    } catch (error) {
+      console.error('Error loading user data from AsyncStorage:', error);
+      fetchStats('');
+    }
+  }, [fetchStats, pollRestaurantStatus, syncToggleState]);
 
   // Load stats on mount and whenever screen comes into focus, with 5s status polling interval
   useFocusEffect(
@@ -410,10 +425,11 @@ export default function HomeScreen() {
     if (isUpdatingStatusRef.current) return;
 
     const nextState = !isOpenRef.current;
+    lastUserToggleTimeRef.current = Date.now();
     setIsUpdatingStatus(true);
     isUpdatingStatusRef.current = true;
 
-    // 1. Instantly trigger smooth 0ms optimistic UI animation & state update
+    // 1. Instantly trigger smooth optimistic UI animation & state update
     syncToggleState(nextState, true);
 
     // 2. Deep update user data object including all top-level & nested entities
@@ -502,7 +518,7 @@ export default function HomeScreen() {
         const data = await response.json();
         console.log('[Status Toggle] MongoDB response:', data);
         const confirmedIsActive = extractIsActiveStrict(data);
-        if (typeof confirmedIsActive === 'boolean') {
+        if (typeof confirmedIsActive === 'boolean' && confirmedIsActive !== isOpenRef.current) {
           syncToggleState(confirmedIsActive, true);
         }
       }
@@ -523,6 +539,16 @@ export default function HomeScreen() {
   const circleX = animVal.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 142],
+  });
+
+  const openOpacity = animVal.interpolate({
+    inputRange: [0, 0.4, 1],
+    outputRange: [0, 0, 1],
+  });
+
+  const closedOpacity = animVal.interpolate({
+    inputRange: [0, 0.6, 1],
+    outputRange: [1, 0, 0],
   });
 
   return (
@@ -553,30 +579,30 @@ export default function HomeScreen() {
           <Animated.View
             style={[
               styles.toggleContainer,
-              { backgroundColor: isOpen ? '#05B686' : '#E35436' },
+              { backgroundColor: bgColor },
             ]}
           >
             {/* OPEN Text on Left */}
-            <View
+            <Animated.View
               style={[
                 styles.openTextWrapper,
-                { opacity: isOpen ? 1 : 0 },
+                { opacity: openOpacity },
               ]}
               pointerEvents="none"
             >
               <Text style={styles.toggleText}>OPEN</Text>
-            </View>
+            </Animated.View>
 
             {/* CLOSED Text on Right */}
-            <View
+            <Animated.View
               style={[
                 styles.closedTextWrapper,
-                { opacity: isOpen ? 0 : 1 },
+                { opacity: closedOpacity },
               ]}
               pointerEvents="none"
             >
               <Text style={styles.toggleText}>CLOSED</Text>
-            </View>
+            </Animated.View>
 
             {/* Sliding White Power Circle */}
             <Animated.View
@@ -585,18 +611,20 @@ export default function HomeScreen() {
                 { transform: [{ translateX: circleX }] },
               ]}
             >
-              {isUpdatingStatus ? (
-                <ActivityIndicator
-                  size="small"
-                  color={isOpen ? '#05B686' : '#E35436'}
-                />
-              ) : (
+              <Animated.View style={[StyleSheet.absoluteFill, styles.centerContent, { opacity: openOpacity }]}>
                 <Ionicons
                   name="power"
                   size={20}
-                  color={isOpen ? '#05B686' : '#E35436'}
+                  color="#05B686"
                 />
-              )}
+              </Animated.View>
+              <Animated.View style={[StyleSheet.absoluteFill, styles.centerContent, { opacity: closedOpacity }]}>
+                <Ionicons
+                  name="power"
+                  size={20}
+                  color="#E35436"
+                />
+              </Animated.View>
             </Animated.View>
           </Animated.View>
         </TouchableOpacity>
@@ -744,6 +772,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 3,
+  },
+  centerContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   /* ── MY MENU Button ── */

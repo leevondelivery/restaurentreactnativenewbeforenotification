@@ -1,26 +1,25 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import { clearFCMTokenOnLogout, stopOrderNotificationSound } from '@/services/NotificationService';
+import { stopOrderSoundNative } from '@/services/soundService';
+import { clearUser, setUser } from '@/store/userSlice';
+import { Ionicons } from '@expo/vector-icons';
+import notifee from '@notifee/react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
+  BackHandler,
+  Linking,
+  Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
+  StyleSheet,
+  Text,
   TouchableOpacity,
-  Linking,
-  Modal,
-  ActivityIndicator,
-  BackHandler,
-  Platform,
+  View
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, useFocusEffect } from 'expo-router';
-import { useSelector, useDispatch } from 'react-redux';
-import { clearUser, setUser } from '@/store/userSlice';
-import notifee from '@notifee/react-native';
-import { clearFCMTokenOnLogout, stopOrderNotificationSound } from '@/services/NotificationService';
-import { stopOrderSoundNative } from '@/services/soundService';
+import { useDispatch, useSelector } from 'react-redux';
 
 import './settings.css';
 
@@ -115,7 +114,7 @@ export default function SettingsScreen() {
       try {
         await stopOrderNotificationSound();
         await stopOrderSoundNative();
-      } catch (e) {}
+      } catch (e) { }
 
       // 2. Clear FCM Token from backend (with 1.2s timeout so logout is never delayed)
       try {
@@ -123,7 +122,7 @@ export default function SettingsScreen() {
           clearFCMTokenOnLogout(userData),
           new Promise((resolve) => setTimeout(resolve, 1200)),
         ]);
-      } catch (e) {}
+      } catch (e) { }
 
       // 3. Wipe local AsyncStorage & Redux user session
       dispatch(clearUser());
@@ -142,7 +141,7 @@ export default function SettingsScreen() {
           'isLoggedIn',
           'lastActiveTimestamp',
         ]);
-      } catch (_e) {}
+      } catch (_e) { }
       dispatch(clearUser());
     } finally {
       router.replace('/login');

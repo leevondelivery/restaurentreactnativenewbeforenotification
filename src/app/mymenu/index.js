@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
   BackHandler,
   Platform,
@@ -21,62 +22,95 @@ import './mymenu.css';
 
 export default function MyMenuScreen() {
   const router = useRouter();
+  const reduxUserData = useSelector((state) => state.user.userData);
   const [searchQuery, setSearchQuery] = useState('');
   const [menuItems, setMenuItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [userData, setUserData] = useState(null);
+  const [userData, setUserData] = useState(reduxUserData || null);
   const [collectionName, setCollectionName] = useState('');
 
   useEffect(() => {
     loadUserData();
   }, []);
 
-
   const loadUserData = async () => {
     try {
-      setLoading(true);
-      const storedUser = await AsyncStorage.getItem('userData');
-      let userObj = null;
-      if (storedUser) {
-        userObj = JSON.parse(storedUser);
+      let userObj = reduxUserData;
+      if (!userObj) {
+        const storedUser = await AsyncStorage.getItem('userData');
+        if (storedUser) {
+          userObj = JSON.parse(storedUser);
+        }
+      }
+      if (userObj) {
         setUserData(userObj);
       }
-      await fetchMenuItems(userObj);
+
+      const targetRestId = String(
+        userObj?.restId ||
+        userObj?.restaurantId ||
+        userObj?.restaurant_id ||
+        userObj?._id ||
+        ''
+      ).trim();
+      const targetName = userObj?.name || '';
+
+      // Instant Cache Read — 0ms wait for the user
+      const cacheKey = 'cached_menu_items_' + (targetRestId || 'default');
+      try {
+        const cachedStr = await AsyncStorage.getItem(cacheKey);
+        if (cachedStr) {
+          const cachedItems = JSON.parse(cachedStr);
+          if (Array.isArray(cachedItems) && cachedItems.length > 0) {
+            setMenuItems(cachedItems);
+            setLoading(false);
+          }
+        }
+      } catch (cacheErr) {}
+
+      await fetchMenuItems(targetRestId, targetName, cacheKey);
     } catch (error) {
       console.error('Error loading user data or menu items:', error);
       setLoading(false);
     }
   };
 
-  const fetchMenuItems = async (userObj) => {
-    try {
-      const targetRestId =
-        userObj?.restId ||
-        userObj?.restaurantId ||
-        userObj?.restaurant_id ||
-        userObj?._id ||
-        '';
-      const targetName = userObj?.name || '';
+  const fetchMenuItems = async (targetRestId, targetName, cacheKey) => {
+    let response = null;
+    let attempts = 0;
 
-      const queryParams = new URLSearchParams();
-      if (targetRestId) {
-        queryParams.append('restaurantId', targetRestId);
-        queryParams.append('restId', targetRestId);
+    // Try up to 2 times automatically in case of temporary network glitch or slow cold-start
+    while (attempts < 2 && !response) {
+      attempts++;
+      try {
+        response = await fetchMenu(targetRestId, targetName);
+      } catch (err) {
+        console.warn(`[Menu Fetch] Attempt ${attempts} notice:`, err?.message || err);
+        if (attempts < 2) {
+          await new Promise((res) => setTimeout(res, 600));
+        }
       }
-      if (targetName) queryParams.append('name', targetName);
+    }
 
-      const response = await fetchMenu(targetRestId, targetName);
-      const data = await response.json();
-      console.log('Menu fetch response:', data);
+    try {
+      if (response && response.ok) {
+        const data = await response.json();
+        console.log('Menu fetch response:', data);
 
-      if (data.success && Array.isArray(data.items)) {
-        setMenuItems(data.items);
-      } else {
-        setMenuItems([]);
+        if (data.success && Array.isArray(data.items)) {
+          setMenuItems(data.items);
+          if (cacheKey) {
+            AsyncStorage.setItem(cacheKey, JSON.stringify(data.items)).catch(() => {});
+          }
+        }
+        if (data.collectionName) {
+          setCollectionName(data.collectionName);
+        }
+      } else if (!response) {
+        console.warn('[Menu Fetch] Network fetch could not connect; keeping cached items if available.');
       }
     } catch (err) {
-      console.error('Error fetching menu items:', err);
-      setMenuItems([]);
+      console.warn('Error processing menu items response:', err?.message || err);
     } finally {
       setLoading(false);
     }
@@ -87,8 +121,9 @@ export default function MyMenuScreen() {
     const newStatus = !targetItem.itemStatus;
 
     // 1. Optimistic UI update by item identity / _id
-    setMenuItems((prevItems) =>
-      prevItems.map((item) => {
+    let updatedList = [];
+    setMenuItems((prevItems) => {
+      updatedList = prevItems.map((item) => {
         const isMatch =
           (item._id && targetItem._id && item._id === targetItem._id) ||
           item === targetItem;
@@ -96,13 +131,18 @@ export default function MyMenuScreen() {
           return { ...item, itemStatus: newStatus };
         }
         return item;
-      })
-    );
+      });
+      return updatedList;
+    });
+
+    // Update local cache
+    const targetRestId = userData?.restId || userData?.restaurantId || userData?.restaurant_id || userData?._id || '';
+    const cacheKey = 'cached_menu_items_' + (targetRestId || 'default');
+    AsyncStorage.setItem(cacheKey, JSON.stringify(updatedList)).catch(() => {});
 
     // 2. Update MongoDB restuarents collection via API
     try {
       const response = await apiUpdateMenuItemStatus(targetItem.collectionName || collectionName, targetItem._id, newStatus);
-
       const data = await response.json();
       console.log('Update itemStatus response:', data);
     } catch (err) {
@@ -115,7 +155,11 @@ export default function MyMenuScreen() {
   const handleBack = () => {
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
-    router.replace('/settings');
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/home');
+    }
   };
 
   useEffect(() => {

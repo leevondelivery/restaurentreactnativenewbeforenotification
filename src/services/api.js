@@ -5,15 +5,21 @@ import { BASE_URL } from '@/constants/api';
  * Import individual functions in screens instead of calling fetch directly.
  */
 
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 25000;
 
 /** Abortable fetch helper with built-in timeout */
 const fetchWithTimeout = (url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) => {
+  if (typeof options === 'number') {
+    timeoutMs = options;
+    options = {};
+  }
   const controller = new AbortController();
+  let timedOut = false;
   const tid = setTimeout(() => {
+    timedOut = true;
     try {
       controller.abort();
-    } catch (_) {}
+    } catch (_) { }
   }, timeoutMs);
 
   if (options.signal) {
@@ -23,12 +29,20 @@ const fetchWithTimeout = (url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) => 
       options.signal.addEventListener('abort', () => {
         try {
           controller.abort();
-        } catch (_) {}
+        } catch (_) { }
       }, { once: true });
     }
   }
 
   return fetch(url, { ...options, signal: controller.signal })
+    .catch((err) => {
+      if (timedOut || err.name === 'AbortError') {
+        const timeoutError = new Error(`Request to ${url} timed out after ${timeoutMs / 1000}s`);
+        timeoutError.name = 'TimeoutError';
+        throw timeoutError;
+      }
+      throw err;
+    })
     .finally(() => clearTimeout(tid));
 };
 
@@ -169,7 +183,7 @@ export const fetchMenu = (restaurantId, name) => {
   const params = new URLSearchParams();
   if (restaurantId) { params.append('restaurantId', restaurantId); params.append('restId', restaurantId); }
   if (name) params.append('name', name);
-  return fetchWithTimeout(BASE_URL + '/api/menu?' + params.toString());
+  return fetchWithTimeout(BASE_URL + '/api/menu?' + params.toString(), {}, 30000);
 };
 
 export const updateMenuItemStatus = (collectionName, itemId, itemStatus) =>
