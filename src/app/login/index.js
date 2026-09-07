@@ -86,7 +86,6 @@ export default function LoginScreen() {
         if (parsed && (parsed.restId || parsed.restaurantId || parsed.email || parsed._id || parsed.phone)) {
           await AsyncStorage.setItem('lastActiveTimestamp', now.toString());
           dispatch(setUser(parsed));
-          initFCMToken(parsed);
 
           let targetRoute = '/home';
           if (Platform.OS !== 'web') {
@@ -139,12 +138,7 @@ export default function LoginScreen() {
     setIsLoading(true);
 
     try {
-      let currentFcmToken = '';
-      try {
-        currentFcmToken = (await messaging().getToken()) || '';
-      } catch (e) { }
-
-      const response = await loginUser(email.trim(), password.trim(), currentFcmToken);
+      const response = await loginUser(email.trim(), password.trim(), '');
       const data = await response.json();
 
       if (response.ok && data.success) {

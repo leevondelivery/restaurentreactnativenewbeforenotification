@@ -221,8 +221,8 @@ export default function MyReviewsScreen() {
             const istDateStr = getIstDateTime(rev);
             const itemsList = getItemsList(rev);
             const ratingVal = rev.restaurantRating || rev.rating || 5;
-            const commentText =
-              rev.restaurantReview || rev.review || 'No review comment provided.';
+            const rawComment = rev.restaurantReview || rev.review || 'No review comment provided.';
+            const commentText = String(rawComment).replace(/^["']+|["']+$|^"+|"+$/g, '').trim();
 
             return (
               <View key={rev._id || orderIdVal} style={styles.reviewOuterCard}>
@@ -262,7 +262,7 @@ export default function MyReviewsScreen() {
 
                 {/* 3rd: Customer Review Quote Box */}
                 <View style={styles.reviewCommentBox}>
-                  <Text style={styles.reviewCommentText}>"{commentText}"</Text>
+                  <Text style={styles.reviewCommentText}>{commentText}</Text>
                 </View>
               </View>
             );

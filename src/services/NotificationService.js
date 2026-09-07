@@ -221,31 +221,58 @@ export async function stopOrderNotificationSound(orderId) {
 }
 
 /**
+ * Check if the current device's FCM token matches the token stored in MongoDB backend
+ */
+export async function checkIsThisDeviceActiveForFCM(dbFcmToken) {
+  try {
+    if (!dbFcmToken || String(dbFcmToken).trim() === '') return false;
+    let deviceToken = null;
+    try {
+      deviceToken = await messaging().getToken();
+    } catch (e) {}
+    if (!deviceToken) return false;
+    return String(dbFcmToken).trim() === String(deviceToken).trim();
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * Request notification permissions and register FCM token to backend
  */
 export async function initFCMToken(userParam) {
   try {
-    let token = null;
-    try {
-      token = await messaging().getToken();
-    } catch (tokenErr) {
-      console.warn('[FCM] Direct getToken notice:', tokenErr.message);
+    let authStatus = await messaging().hasPermission();
+    if (
+      authStatus !== messaging.AuthorizationStatus.AUTHORIZED &&
+      authStatus !== messaging.AuthorizationStatus.PROVISIONAL
+    ) {
       try {
-        const authStatus = await messaging().requestPermission();
-        const enabled =
-          authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-          authStatus === messaging.AuthorizationStatus.PROVISIONAL;
-        if (enabled) {
-          token = await messaging().getToken();
-        }
+        authStatus = await messaging().requestPermission();
       } catch (pErr) {
         console.warn('[FCM] Permission request notice:', pErr.message);
       }
     }
 
+    const enabled =
+      authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+      authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+
+    if (!enabled) {
+      console.warn('[FCM] Notification permission not granted.');
+      return { success: false, error: 'Notification permission not granted' };
+    }
+
+    let token = null;
+    try {
+      token = await messaging().getToken();
+    } catch (tokenErr) {
+      console.warn('[FCM] Direct getToken notice:', tokenErr.message);
+    }
+
     if (!token) {
       console.warn('[FCM] Could not obtain device FCM token.');
-      return;
+      return { success: false, error: 'Could not obtain device FCM token' };
     }
 
     console.log(`[FCM] Device FCM token obtained: ${token}`);
@@ -292,6 +319,10 @@ export async function initFCMToken(userParam) {
     const resData = await res.json();
     console.log(`[FCM] Server response for token registration:`, resData);
 
+    try {
+      await AsyncStorage.setItem('fcmToken', token);
+    } catch (e) {}
+
     messaging().onTokenRefresh(async (newToken) => {
       if (newToken) {
         try {
@@ -305,13 +336,17 @@ export async function initFCMToken(userParam) {
           });
           const refData = await refRes.json();
           console.log(`[FCM] Server response for token refresh:`, refData);
+          await AsyncStorage.setItem('fcmToken', newToken);
         } catch (refErr) {
           console.error('[FCM] Error updating refreshed FCM token:', refErr);
         }
       }
     });
+
+    return { success: true, token, resData };
   } catch (err) {
     console.error('[FCM] Error initializing FCM token:', err);
+    return { success: false, error: err.message };
   }
 }
 
@@ -329,7 +364,7 @@ export async function clearFCMTokenOnLogout(userParam) {
     const email = userObj?.email || '';
 
     if (userId || restId || phone || email) {
-      await registerFCMToken({
+      const res = await registerFCMToken({
         restaurantId: restId,
         restId,
         userId,
@@ -338,9 +373,15 @@ export async function clearFCMTokenOnLogout(userParam) {
         fcmToken: '',
       });
       console.log('[FCM] Cleared fcmToken in MongoDB backend on logout.');
+      try {
+        await AsyncStorage.removeItem('fcmToken');
+      } catch (e) {}
+      return { success: true };
     }
+    return { success: false, error: 'User info missing' };
   } catch (err) {
     console.error('Error clearing fcmToken on logout:', err);
+    return { success: false, error: err.message };
   }
 }
 

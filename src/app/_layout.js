@@ -79,15 +79,10 @@ function AppLayout() {
 
     setupNotificationChannel();
 
-    // Request Android 13+ Notification Permission & Init FCM
+    // Request Android 13+ Notification Permission
     (async () => {
       try {
         await notifee.requestPermission();
-        const storedUserStr = await AsyncStorage.getItem('userData');
-        if (storedUserStr) {
-          const u = JSON.parse(storedUserStr);
-          initFCMToken(u);
-        }
       } catch (e) {
         console.warn('Error requesting notification permission on launch:', e);
       }

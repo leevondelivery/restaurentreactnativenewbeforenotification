@@ -1,5 +1,6 @@
 import { useOrders } from '@/context/OrdersContext';
 import { fetchAcceptedByRestaurants, fetchRestaurantStats, fetchRestaurantStatus, updateRestaurantStatus } from '@/services/api';
+import { checkIsThisDeviceActiveForFCM, clearFCMTokenOnLogout, initFCMToken } from '@/services/NotificationService';
 import { setUser } from '@/store/userSlice';
 import { extractIsActive, extractIsActiveStrict } from '@/utils/statusUtils';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,9 +9,11 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   Image,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -34,6 +37,81 @@ export default function HomeScreen() {
   const [userData, setUserData] = useState(reduxUserData || null);
   const [isOpen, setIsOpen] = useState(initialActive);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isNotifActive, setIsNotifActive] = useState(false);
+  const [isTogglingNotif, setIsTogglingNotif] = useState(false);
+  const [notifModalVisible, setNotifModalVisible] = useState(false);
+  const [notifModalConfig, setNotifModalConfig] = useState({
+    type: 'success',
+    title: '',
+    message: '',
+  });
+
+  const showNotifModal = (type, title, message) => {
+    setNotifModalConfig({ type, title, message });
+    setNotifModalVisible(true);
+  };
+
+  const syncNotifStatusWithBackend = useCallback(async () => {
+    try {
+      const dbFcmToken = reduxUserData?.fcmToken || userData?.fcmToken;
+      if (!dbFcmToken || String(dbFcmToken).trim() === '') {
+        setIsNotifActive(false);
+        await AsyncStorage.setItem('isNotifEnabled', 'false');
+        return;
+      }
+      const isActiveOnThisDevice = await checkIsThisDeviceActiveForFCM(dbFcmToken);
+      setIsNotifActive(isActiveOnThisDevice);
+      await AsyncStorage.setItem('isNotifEnabled', isActiveOnThisDevice ? 'true' : 'false');
+    } catch (e) {}
+  }, [reduxUserData, userData]);
+
+  useEffect(() => {
+    syncNotifStatusWithBackend();
+  }, [syncNotifStatusWithBackend]);
+
+  useFocusEffect(
+    useCallback(() => {
+      syncNotifStatusWithBackend();
+    }, [syncNotifStatusWithBackend])
+  );
+
+  const handleNotifToggle = async () => {
+    if (isTogglingNotif) return;
+    setIsTogglingNotif(true);
+
+    const nextState = !isNotifActive;
+    const currentU = userDataRef.current || reduxUserData;
+
+    try {
+      if (nextState) {
+        console.log('[Notif Toggle] Claiming notifications for this device...');
+        const res = await initFCMToken(currentU);
+        if (res && res.success) {
+          setIsNotifActive(true);
+          await AsyncStorage.setItem('isNotifEnabled', 'true');
+          showNotifModal('success', 'Notifications Enabled', 'Incoming order alerts will ring on this device.');
+        } else {
+          setIsNotifActive(false);
+          await AsyncStorage.setItem('isNotifEnabled', 'false');
+          showNotifModal(
+            'error',
+            'Notification Notice',
+            res?.error || 'Could not obtain device FCM token. Please check phone notification permissions.'
+          );
+        }
+      } else {
+        console.log('[Notif Toggle] Disabling notifications for this device...');
+        await clearFCMTokenOnLogout(currentU);
+        setIsNotifActive(false);
+        await AsyncStorage.setItem('isNotifEnabled', 'false');
+        showNotifModal('off', 'Notifications Disabled', 'Push notifications paused for this device.');
+      }
+    } catch (err) {
+      console.error('[Notif Toggle] Error toggling notification state:', err);
+    } finally {
+      setIsTogglingNotif(false);
+    }
+  };
 
   // Real stats loaded from acceptedbyrestorents collection by restaurantId
   const [todayEarnings, setTodayEarnings] = useState(0);
@@ -629,6 +707,32 @@ export default function HomeScreen() {
           </Animated.View>
         </TouchableOpacity>
 
+        {/* ── NOTIFICATIONS ON / OFF Pill ── */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleNotifToggle}
+          disabled={isTogglingNotif}
+          style={[
+            styles.notifPillButton,
+            { backgroundColor: isNotifActive ? '#05B686' : '#4B5563' }
+          ]}
+        >
+          {isTogglingNotif ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <>
+              <Ionicons
+                name={isNotifActive ? 'notifications' : 'notifications-off'}
+                size={18}
+                color="#FFFFFF"
+              />
+              <Text style={styles.notifPillText}>
+                {isNotifActive ? 'NOTIFICATIONS ON' : 'NOTIFICATIONS OFF'}
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+
         {/* ── MY MENU Button ── */}
         <TouchableOpacity
           style={styles.myMenuButton}
@@ -666,6 +770,69 @@ export default function HomeScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* ── Custom Styled Notification Alert Modal ── */}
+      <Modal
+        visible={notifModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setNotifModalVisible(false)}
+      >
+        <View style={styles.notifModalOverlay}>
+          <View style={styles.notifModalCard}>
+            <TouchableOpacity
+              style={styles.notifModalCloseBtn}
+              onPress={() => setNotifModalVisible(false)}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            >
+              <Ionicons name="close" size={20} color="#777777" />
+            </TouchableOpacity>
+
+            <View
+              style={[
+                styles.notifModalIconCircle,
+                {
+                  backgroundColor:
+                    notifModalConfig.type === 'success'
+                      ? '#05B686'
+                      : notifModalConfig.type === 'off'
+                      ? '#4B5563'
+                      : '#E35436',
+                },
+              ]}
+            >
+              <Ionicons
+                name={
+                  notifModalConfig.type === 'success'
+                    ? 'notifications'
+                    : notifModalConfig.type === 'off'
+                    ? 'notifications-off'
+                    : 'alert-circle'
+                }
+                size={28}
+                color="#FFFFFF"
+              />
+            </View>
+
+            <Text style={styles.notifModalTitle}>{notifModalConfig.title}</Text>
+            <Text style={styles.notifModalMessage}>{notifModalConfig.message}</Text>
+
+            <TouchableOpacity
+              style={[
+                styles.notifModalButton,
+                {
+                  backgroundColor:
+                    notifModalConfig.type === 'success' ? '#05B686' : '#1E1E1E',
+                },
+              ]}
+              onPress={() => setNotifModalVisible(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.notifModalButtonText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -778,6 +945,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+  /* ── NOTIFICATIONS Pill Button ── */
+  notifPillButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 50,
+    height: 46,
+    width: 220,
+    gap: 8,
+    marginTop: 14,
+    marginBottom: 20,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  notifPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
+  },
+
   /* ── MY MENU Button ── */
   myMenuButton: {
     flexDirection: 'row',
@@ -838,5 +1029,76 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1C1C1C',
     textAlign: 'center',
+  },
+
+  /* ── Custom Styled Notification Modal Styles ── */
+  notifModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  notifModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#F7F7EB',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 8,
+    position: 'relative',
+  },
+  notifModalCloseBtn: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    padding: 4,
+  },
+  notifModalIconCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    marginTop: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  notifModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111111',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  notifModalMessage: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#555555',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  notifModalButton: {
+    width: '100%',
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  notifModalButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.8,
   },
 });
