@@ -236,7 +236,11 @@ export default function MyMenuScreen() {
                 <View key={item._id || index} style={styles.menuItemCard}>
                   <View style={styles.itemInfoCol}>
                     <Text style={styles.menuItemName}>{item.name}</Text>
-                    <Text style={styles.menuItemPrice}>₹ {item.price}</Text>
+                    {item.isFreeItem === true || item.isFreeItem === 'true' || String(item.isFreeItem).toLowerCase() === 'true' || Number(item.price) === 0 ? (
+                      <Text style={[styles.menuItemPrice, styles.freePriceText]}>FREE</Text>
+                    ) : (
+                      <Text style={styles.menuItemPrice}>₹ {item.price}</Text>
+                    )}
                   </View>
 
                   {/* Custom Styled Switch Toggle for itemStatus */}
@@ -425,6 +429,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#666666',
+  },
+  freePriceText: {
+    color: '#2E7D32',
+    fontWeight: '700',
   },
 
   /* Custom Pill Toggle Switch for itemStatus */

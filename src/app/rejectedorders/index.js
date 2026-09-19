@@ -189,12 +189,14 @@ export default function RejectedOrdersScreen() {
                 : rawPrice * (1 - commRate / 100);
             const qty = Number(it.quantity || it.qty || 1);
             const lineTotal = discountedPrice * qty;
+            const isFree = it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || rawPrice === 0 || discountedPrice === 0;
             return {
               ...it,
               rawPrice,
               discountedPrice,
               qty,
               lineTotal,
+              isFreeItem: isFree,
             };
           });
 
@@ -221,7 +223,9 @@ export default function RejectedOrdersScreen() {
                 <View key={idx} style={styles.tableItemRow}>
                   <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
                   <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>x{item.qty}</Text>
-                  <Text style={[styles.itemPriceText, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>₹{Number(item.discountedPrice).toFixed(2)}</Text>
+                  <Text style={[styles.itemPriceText, { flex: 1, textAlign: 'right', paddingLeft: 6, color: (item.isFreeItem || Number(item.discountedPrice) === 0) ? '#2E7D32' : '#222222', fontWeight: (item.isFreeItem || Number(item.discountedPrice) === 0) ? 'bold' : '600' }]}>
+                    {(item.isFreeItem || Number(item.discountedPrice) === 0) ? 'FREE' : `₹${Number(item.discountedPrice).toFixed(2)}`}
+                  </Text>
                 </View>
               ))}
 

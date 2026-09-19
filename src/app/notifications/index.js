@@ -236,12 +236,14 @@ export default function NotificationsScreen() {
                 : (it.priceAfterCommission !== undefined ? Number(it.priceAfterCommission) || 0 : rawPrice);
               const qty = Number(it.quantity || it.qty || 1) || 1;
               const lineTotal = discountedPrice * qty;
+              const isFree = it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || rawPrice === 0 || discountedPrice === 0;
               return {
                 ...it,
                 rawPrice,
                 discountedPrice,
                 qty,
                 lineTotal,
+                isFreeItem: isFree,
               };
             });
 
@@ -290,8 +292,8 @@ export default function NotificationsScreen() {
                     <View key={idx} style={styles.tableRow}>
                       <Text style={[styles.itemName, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{it.name}</Text>
                       <Text style={[styles.itemQty, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>x{it.qty}</Text>
-                      <Text style={[styles.itemPrice, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>
-                        ₹{Number(it.discountedPrice).toFixed(2)}
+                      <Text style={[styles.itemPrice, { flex: 1, textAlign: 'right', paddingLeft: 6, color: (it.isFreeItem || Number(it.discountedPrice) === 0) ? '#2E7D32' : '#111111', fontWeight: (it.isFreeItem || Number(it.discountedPrice) === 0) ? 'bold' : '600' }]}>
+                        {(it.isFreeItem || Number(it.discountedPrice) === 0) ? 'FREE' : `₹${Number(it.discountedPrice).toFixed(2)}`}
                       </Text>
                     </View>
                   ))}

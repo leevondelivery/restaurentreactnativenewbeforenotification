@@ -117,11 +117,16 @@ export default function MyReviewsScreen() {
 
   const getItemsList = (rev) => {
     if (Array.isArray(rev.items) && rev.items.length > 0) {
-      return rev.items.map((it) => ({
-        name: typeof it === 'string' ? it : it.name || 'Item',
-        quantity: typeof it === 'object' ? it.quantity || 1 : 1,
-        price: typeof it === 'object' ? it.price || 200 : 200,
-      }));
+      return rev.items.map((it) => {
+        const p = typeof it === 'object' ? it.price ?? 200 : 200;
+        const isFree = typeof it === 'object' && (it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || Number(p) === 0);
+        return {
+          name: typeof it === 'string' ? it : it.name || 'Item',
+          quantity: typeof it === 'object' ? it.quantity || 1 : 1,
+          price: p,
+          isFreeItem: isFree,
+        };
+      });
     }
     if (typeof rev.items === 'string' && rev.items.trim()) {
       return [{ name: rev.items, quantity: 1, price: 200 }];
@@ -248,7 +253,9 @@ export default function MyReviewsScreen() {
                   <View key={idx} style={styles.tableItemRow}>
                     <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
                     <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>x{item.quantity}</Text>
-                    <Text style={[styles.itemPriceText, { flex: 1, textAlign: 'right', paddingLeft: 6 }]}>₹{item.price}</Text>
+                    <Text style={[styles.itemPriceText, { flex: 1, textAlign: 'right', paddingLeft: 6, color: (item.isFreeItem || Number(item.price) === 0) ? '#2E7D32' : '#222222', fontWeight: (item.isFreeItem || Number(item.price) === 0) ? 'bold' : '500' }]}>
+                      {(item.isFreeItem || Number(item.price) === 0) ? 'FREE' : `₹${item.price}`}
+                    </Text>
                   </View>
                 ))}
 

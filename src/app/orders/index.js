@@ -233,10 +233,12 @@ export default function OrdersScreen() {
         return { name: String(it || 'Item'), quantity: 1, price: 0 };
       }
       const rawPrice = Number(it.originalPrice ?? it.price ?? 0) || 0;
+      const isFree = it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || rawPrice === 0;
       return {
         name: it.name || 'Item',
         quantity: Number(it.quantity || it.qty || 1) || 1,
         price: rawPrice,
+        isFreeItem: isFree,
       };
     });
 
@@ -375,15 +377,18 @@ export default function OrdersScreen() {
               <tbody>
                 ${itemsList
         .map(
-          (item, idx) => `
+          (item, idx) => {
+            const isFree = item.isFreeItem || Number(item.price || 0) === 0;
+            return `
                   <tr>
                     <td>${idx + 1}</td>
                     <td>${item.name}</td>
                     <td class="center-col">${item.quantity}</td>
-                    <td class="right">₹${Number(item.price).toFixed(2)}</td>
-                    <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
+                    <td class="right">${isFree ? 'FREE' : `₹${Number(item.price).toFixed(2)}`}</td>
+                    <td class="right">${isFree ? 'FREE' : `₹${(Number(item.price * item.quantity) || 0).toFixed(2)}`}</td>
                   </tr>
-                `
+                `;
+          }
         )
         .join('')}
               </tbody>
@@ -570,12 +575,14 @@ export default function OrdersScreen() {
                 ? Number(it.priceAfterCommission) || 0
                 : (commRate > 0 ? rawPrice * (1 - commRate / 100) : rawPrice);
             const qty = Number(it.quantity || it.qty || 1) || 1;
+            const isFree = it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || rawPrice === 0;
             return {
               ...it,
               name: it.name || 'Item',
               rawPrice,
               discountedPrice,
               qty,
+              isFreeItem: isFree,
             };
           });
 
@@ -637,20 +644,28 @@ export default function OrdersScreen() {
                   <Text style={[styles.itemNameText, { flex: 2, borderRightWidth: 1.5, borderRightColor: '#555555', paddingRight: 6 }]}>{item.name}</Text>
                   <Text style={[styles.itemQtyText, { flex: 1, textAlign: 'center', borderRightWidth: 1.5, borderRightColor: '#555555', paddingHorizontal: 4 }]}>{item.qty}</Text>
 
-                  <View style={[styles.priceColumnContainer, { flex: 1.2, paddingLeft: 6 }]}>
-                    {/* Strikethrough Raw Price & Red Commission Badge */}
-                    <View style={styles.strikethroughRow}>
-                      <Text style={styles.strikethroughPriceText}>
-                        ₹{(Number(item.rawPrice) || 0).toFixed(2)}
+                  <View style={[styles.priceColumnContainer, { flex: 1.2, paddingLeft: 6, justifyContent: 'center' }]}>
+                    {item.isFreeItem || (Number(item.rawPrice) === 0 && Number(item.discountedPrice) === 0) ? (
+                      <Text style={[styles.finalNetPriceText, { color: '#2E7D32', fontWeight: 'bold' }]}>
+                        FREE
                       </Text>
-                      <Text style={styles.commissionBadgeText}>
-                        {commRate}%
-                      </Text>
-                    </View>
-                    {/* Net Price After Commission */}
-                    <Text style={styles.finalNetPriceText}>
-                      ₹{(Number(item.discountedPrice) || 0).toFixed(2)}
-                    </Text>
+                    ) : (
+                      <>
+                        {/* Strikethrough Raw Price & Red Commission Badge */}
+                        <View style={styles.strikethroughRow}>
+                          <Text style={styles.strikethroughPriceText}>
+                            ₹{(Number(item.rawPrice) || 0).toFixed(2)}
+                          </Text>
+                          <Text style={styles.commissionBadgeText}>
+                            {commRate}%
+                          </Text>
+                        </View>
+                        {/* Net Price After Commission */}
+                        <Text style={styles.finalNetPriceText}>
+                          ₹{(Number(item.discountedPrice) || 0).toFixed(2)}
+                        </Text>
+                      </>
+                    )}
                   </View>
                 </View>
               ))}
@@ -806,17 +821,18 @@ export default function OrdersScreen() {
                     const rawP = Number(it.originalPrice ?? it.price ?? 0) || 0;
                     const qty = Number(it.quantity || it.qty || 1) || 1;
                     const itemTotal = rawP * qty;
+                    const isFree = it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || rawP === 0;
 
                     return (
                       <View key={i} style={styles.receiptItemRow}>
                         <Text style={[styles.receiptItemText, { flex: 0.6 }]}>{i + 1}</Text>
                         <Text style={[styles.receiptItemText, { flex: 2 }]}>{it.name || 'Item'}</Text>
                         <Text style={[styles.receiptItemText, { flex: 0.8, textAlign: 'center' }]}>{qty}</Text>
-                        <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right' }]}>
-                          ₹{Number(rawP).toFixed(2)}
+                        <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right', color: isFree ? '#2E7D32' : '#333333', fontWeight: isFree ? 'bold' : 'normal' }]}>
+                          {isFree ? 'FREE' : `₹${Number(rawP).toFixed(2)}`}
                         </Text>
-                        <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right' }]}>
-                          ₹{Number(itemTotal).toFixed(2)}
+                        <Text style={[styles.receiptItemText, { flex: 1.2, textAlign: 'right', color: isFree ? '#2E7D32' : '#333333', fontWeight: isFree ? 'bold' : 'normal' }]}>
+                          {isFree ? 'FREE' : `₹${Number(itemTotal).toFixed(2)}`}
                         </Text>
                       </View>
                     );

@@ -144,10 +144,12 @@ export default function OrderInvoiceScreen() {
 
   const itemsList = itemsRaw.map((it) => {
     const rawPrice = Number(it.originalPrice ?? it.price ?? 200.0) || 0;
+    const isFree = it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || rawPrice === 0;
     return {
       name: it.name || 'Item',
       quantity: Number(it.quantity || it.qty || 1) || 1,
       price: rawPrice,
+      isFreeItem: isFree,
     };
   });
 
@@ -281,8 +283,8 @@ export default function OrderInvoiceScreen() {
                       <td>${idx + 1}</td>
                       <td>${item.name}</td>
                       <td class="center-col">${item.quantity}</td>
-                      <td class="right">₹${Number(item.price || 0).toFixed(2)}</td>
-                      <td class="right">₹${(Number(item.price * item.quantity) || 0).toFixed(2)}</td>
+                      <td class="right">${item.isFreeItem || Number(item.price || 0) === 0 ? 'FREE' : `₹${Number(item.price || 0).toFixed(2)}`}</td>
+                      <td class="right">${item.isFreeItem || Number(item.price || 0) === 0 ? 'FREE' : `₹${(Number(item.price * item.quantity) || 0).toFixed(2)}`}</td>
                     </tr>
                   `
                     )
@@ -443,11 +445,11 @@ export default function OrderInvoiceScreen() {
                 <Text style={[styles.receiptItemNameText, { flex: 0.6 }]}>{idx + 1}</Text>
                 <Text style={[styles.receiptItemNameText, { flex: 2 }]}>{item.name}</Text>
                 <Text style={[styles.receiptItemQtyText, { flex: 0.8, textAlign: 'center' }]}>{item.quantity}</Text>
-                <Text style={[styles.receiptItemPriceText, { flex: 1.2, textAlign: 'right' }]}>
-                  ₹{Number(item.price || 0).toFixed(2)}
+                <Text style={[styles.receiptItemPriceText, { flex: 1.2, textAlign: 'right', color: (item.isFreeItem || Number(item.price || 0) === 0) ? '#2E7D32' : '#333333', fontWeight: (item.isFreeItem || Number(item.price || 0) === 0) ? 'bold' : 'normal' }]}>
+                  {(item.isFreeItem || Number(item.price || 0) === 0) ? 'FREE' : `₹${Number(item.price || 0).toFixed(2)}`}
                 </Text>
-                <Text style={[styles.receiptItemPriceText, { flex: 1.2, textAlign: 'right' }]}>
-                  ₹{(Number(item.price || 0) * Number(item.quantity || 1)).toFixed(2)}
+                <Text style={[styles.receiptItemPriceText, { flex: 1.2, textAlign: 'right', color: (item.isFreeItem || Number(item.price || 0) === 0) ? '#2E7D32' : '#333333', fontWeight: (item.isFreeItem || Number(item.price || 0) === 0) ? 'bold' : 'normal' }]}>
+                  {(item.isFreeItem || Number(item.price || 0) === 0) ? 'FREE' : `₹${(Number(item.price || 0) * Number(item.quantity || 1)).toFixed(2)}`}
                 </Text>
               </View>
             ))}

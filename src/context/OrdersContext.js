@@ -548,16 +548,18 @@ export const OrdersProvider = ({ children }) => {
         const initialStatus = isReady ? 'Ready' : 'Preparing';
 
         const payload = {
+          ...targetOrder,
+          orderData: targetOrder,
           orderId: orderIdVal,
-          restaurantId: String(asyncRestId),
-          restId: String(asyncRestId),
-          restaurant_id: String(asyncRestId),
-          rest: restaurantInfo.address,
+          restaurantId: String(asyncRestId || targetOrder.restaurantId || targetOrder.restId || ''),
+          restId: String(asyncRestId || targetOrder.restId || targetOrder.restaurantId || ''),
+          restaurant_id: String(asyncRestId || targetOrder.restaurant_id || ''),
+          rest: restaurantInfo.address || targetOrder.rest || '',
           restaurantLocation: {
-            lat: restaurantInfo.lat,
-            lng: restaurantInfo.lng,
+            lat: restaurantInfo.lat ?? targetOrder.restaurantLocation?.lat,
+            lng: restaurantInfo.lng ?? targetOrder.restaurantLocation?.lng,
           },
-          razorpayOrderId: targetOrder.razorpayOrderId || 'order_T4fAtetGb5u6c9',
+          razorpayOrderId: targetOrder.razorpayOrderId || targetOrder.orderId || 'order_T4fAtetGb5u6c9',
           preparationTime: prepMins,
           prepTime: prepMins,
           remainingPrepTimeMins: prepMins,
