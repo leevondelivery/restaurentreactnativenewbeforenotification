@@ -570,31 +570,51 @@ export const OrdersProvider = ({ children }) => {
           isReady: isReady,
         };
 
+        const packagingFee = Number(
+          targetOrder.packagingFee ??
+          targetOrder.orderData?.packagingFee ??
+          targetOrder.packagingCharges ??
+          targetOrder.orderData?.packagingCharges ??
+          targetOrder.packagingCharge ??
+          targetOrder.orderData?.packagingCharge ??
+          targetOrder.packingFee ??
+          targetOrder.orderData?.packingFee ??
+          targetOrder.packingCharges ??
+          targetOrder.orderData?.packingCharges ??
+          0
+        ) || 0;
+
         const grossTotal = Number(targetOrder.totalPrice || 0);
         const commissionRate = Number(
           targetOrder.commissionRate || restaurantInfo.commission || 0
         );
         const calculatedGrandTotal = commissionRate > 0
-          ? parseFloat((grossTotal * (1 - commissionRate / 100)).toFixed(2))
-          : grossTotal;
+          ? parseFloat((grossTotal * (1 - commissionRate / 100)).toFixed(2)) + packagingFee
+          : grossTotal + packagingFee;
         const grandTotal = Number(
           targetOrder.totalPriceAfterCommission ?? targetOrder.netEarnings ?? calculatedGrandTotal
         );
-        const totalCommissionCut = parseFloat((grossTotal - grandTotal).toFixed(2));
+        const totalCommissionCut = parseFloat((grossTotal - (grandTotal - packagingFee)).toFixed(2));
 
         const pendingPayload = {
           restaurantId: String(asyncRestId),
           restaurantName: asyncRestName,
           grossTotal,
           grandTotal,
+          packagingFee,
           commissionRate,
           totalCommissionCut,
           date: acceptedAtStr,
           status: 'Pending Clearance',
         };
 
+        payload.packagingFee = packagingFee;
+        payload.netEarnings = grandTotal;
+        payload.totalPriceAfterCommission = grandTotal;
+
         const newlyAcceptedOrder = {
           ...targetOrder,
+          packagingFee,
           acceptedAt: acceptedAtStr,
           preparationTime: prepMins,
           prepTime: prepMins,
@@ -603,6 +623,8 @@ export const OrdersProvider = ({ children }) => {
           status: initialStatus,
           orderStatus: initialStatus,
           isReady: isReady,
+          netEarnings: grandTotal,
+          totalPriceAfterCommission: grandTotal,
         };
 
         // 1. Immediately stop sound & update local UI state (0ms instant response)

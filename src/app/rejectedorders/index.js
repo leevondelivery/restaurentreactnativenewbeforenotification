@@ -203,6 +203,24 @@ export default function RejectedOrdersScreen() {
           const totalQty = itemCalculations.reduce((acc, it) => acc + it.qty, 0);
           const netEarningsTotal = itemCalculations.reduce((acc, it) => acc + it.lineTotal, 0);
 
+          const packagingFee = Number(
+            order.packagingFee ??
+            order.orderData?.packagingFee ??
+            order.packagingCharges ??
+            order.orderData?.packagingCharges ??
+            order.packagingCharge ??
+            order.orderData?.packagingCharge ??
+            order.packingFee ??
+            order.orderData?.packingFee ??
+            order.packingCharges ??
+            order.orderData?.packingCharges ??
+            order.packaging_fee ??
+            order.packing_fee ??
+            0
+          ) || 0;
+
+          const finalNetEarnings = netEarningsTotal + packagingFee;
+
           return (
             <View key={order._id || order.orderId} style={styles.orderOuterCard}>
               {/* Top Header Strip */}
@@ -237,9 +255,18 @@ export default function RejectedOrdersScreen() {
                 <Text style={styles.totalValText}>{totalQty}</Text>
               </View>
 
+              {packagingFee > 0 && (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabelText}>Packing Charges</Text>
+                  <Text style={[styles.totalValText, { color: '#0AB28D' }]}>
+                    +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabelText}>Net Earnings</Text>
-                <Text style={styles.totalValText}>₹{Number(netEarningsTotal).toFixed(2)}</Text>
+                <Text style={styles.totalValText}>₹{Number(finalNetEarnings).toFixed(2)}</Text>
               </View>
 
               {/* Rejected Status Pill Badge */}

@@ -191,6 +191,22 @@ export default function HomeScreen() {
       } catch (e) { }
     }
 
+    const packagingFee = Number(
+      ord.packagingFee ??
+      ord.orderData?.packagingFee ??
+      ord.packagingCharges ??
+      ord.orderData?.packagingCharges ??
+      ord.packagingCharge ??
+      ord.orderData?.packagingCharge ??
+      ord.packingFee ??
+      ord.orderData?.packingFee ??
+      ord.packingCharges ??
+      ord.orderData?.packingCharges ??
+      ord.packaging_fee ??
+      ord.packing_fee ??
+      0
+    ) || 0;
+
     if (itemsRaw.length > 0) {
       const itemEarningsSum = itemsRaw.reduce((acc, it) => {
         if (!it || typeof it !== 'object') return acc;
@@ -203,7 +219,7 @@ export default function HomeScreen() {
       }, 0);
 
       if (itemEarningsSum > 0) {
-        return itemEarningsSum;
+        return itemEarningsSum + packagingFee;
       }
     }
 

@@ -260,11 +260,29 @@ export default function OrdersScreen() {
       0
     );
 
-    const finalTotalPrice = calculatedNetEarnings > 0
+    const packagingFee = Number(
+      order.packagingFee ??
+      order.orderData?.packagingFee ??
+      order.packagingCharges ??
+      order.orderData?.packagingCharges ??
+      order.packagingCharge ??
+      order.orderData?.packagingCharge ??
+      order.packingFee ??
+      order.orderData?.packingFee ??
+      order.packingCharges ??
+      order.orderData?.packingCharges ??
+      order.packaging_fee ??
+      order.packing_fee ??
+      0
+    ) || 0;
+
+    const baseTotalPrice = calculatedNetEarnings > 0
       ? calculatedNetEarnings
       : (commRate > 0
           ? itemsSubtotal * (1 - commRate / 100)
           : (Number(order.totalPriceAfterCommission ?? order.netEarnings ?? itemsSubtotal) || itemsSubtotal));
+
+    const finalTotalPrice = baseTotalPrice + packagingFee;
 
     const rawCommAmount = Number(
       order.commissionAmount ?? order.totalCommissionCut ?? (itemsSubtotal - finalTotalPrice)
@@ -405,6 +423,11 @@ export default function OrdersScreen() {
               <span>Commission</span>
               <span>₹${commissionAmountVal.toFixed(2)}</span>
             </div>
+            ${packagingFee > 0 ? `
+            <div class="row-flex">
+              <span>Packing Charges</span>
+              <span>+₹${packagingFee.toFixed(2)}</span>
+            </div>` : ''}
 
             <div class="total-row">
               <span>Net Receivable</span>
@@ -603,11 +626,29 @@ export default function OrdersScreen() {
             0
           );
 
-          const finalTotalPrice = calculatedNetEarnings > 0
+          const packagingFee = Number(
+            order.packagingFee ??
+            order.orderData?.packagingFee ??
+            order.packagingCharges ??
+            order.orderData?.packagingCharges ??
+            order.packagingCharge ??
+            order.orderData?.packagingCharge ??
+            order.packingFee ??
+            order.orderData?.packingFee ??
+            order.packingCharges ??
+            order.orderData?.packingCharges ??
+            order.packaging_fee ??
+            order.packing_fee ??
+            0
+          ) || 0;
+
+          const baseTotalPrice = calculatedNetEarnings > 0
             ? calculatedNetEarnings
             : (commRate > 0
                 ? grossOrderTotal * (1 - commRate / 100)
                 : (Number(order.totalPriceAfterCommission ?? order.netEarnings ?? grossOrderTotal) || grossOrderTotal));
+
+          const finalTotalPrice = baseTotalPrice + packagingFee;
 
           // Commission amount calculated directly from DB commission percentage rate
           const commissionAmountVal = commRate > 0
@@ -671,6 +712,16 @@ export default function OrdersScreen() {
               ))}
 
               <View style={styles.orderDivider} />
+
+              {/* Packaging Fee from DB */}
+              {packagingFee > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingHorizontal: 4 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '500', color: '#555555' }}>Packing Charges</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#0AB28D' }}>
+                    +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                  </Text>
+                </View>
+              )}
 
               {/* Totals Row */}
               <View style={styles.totalsRow}>
@@ -871,17 +922,35 @@ export default function OrdersScreen() {
                     0
                   );
 
-                  const finalTotalPrice = Number(
+                  const packagingFee = Number(
+                    selectedInvoiceOrder.packagingFee ??
+                    selectedInvoiceOrder.orderData?.packagingFee ??
+                    selectedInvoiceOrder.packagingCharges ??
+                    selectedInvoiceOrder.orderData?.packagingCharges ??
+                    selectedInvoiceOrder.packagingCharge ??
+                    selectedInvoiceOrder.orderData?.packagingCharge ??
+                    selectedInvoiceOrder.packingFee ??
+                    selectedInvoiceOrder.orderData?.packingFee ??
+                    selectedInvoiceOrder.packingCharges ??
+                    selectedInvoiceOrder.orderData?.packingCharges ??
+                    selectedInvoiceOrder.packaging_fee ??
+                    selectedInvoiceOrder.packing_fee ??
+                    0
+                  ) || 0;
+
+                  const baseTotalPrice = Number(
                     selectedInvoiceOrder.totalPriceAfterCommission ?? selectedInvoiceOrder.netEarnings ?? (commRate > 0 ? itemsSubtotal * (1 - commRate / 100) : calculatedNetEarnings)
                   ) || calculatedNetEarnings;
 
+                  const finalTotalPrice = baseTotalPrice + packagingFee;
+
                   const rawCommAmount = Number(
-                    selectedInvoiceOrder.commissionAmount ?? selectedInvoiceOrder.totalCommissionCut ?? (itemsSubtotal - finalTotalPrice)
+                    selectedInvoiceOrder.commissionAmount ?? selectedInvoiceOrder.totalCommissionCut ?? (itemsSubtotal - baseTotalPrice)
                   );
 
                   const commissionAmountVal = commRate > 0
                     ? Number((itemsSubtotal * (commRate / 100)).toFixed(2))
-                    : Number((rawCommAmount > 0 ? rawCommAmount : Math.max(0, itemsSubtotal - finalTotalPrice)).toFixed(2));
+                    : Number((rawCommAmount > 0 ? rawCommAmount : Math.max(0, itemsSubtotal - baseTotalPrice)).toFixed(2));
 
                   const grandTotalVal = Number(finalTotalPrice.toFixed(2));
 
@@ -895,6 +964,14 @@ export default function OrdersScreen() {
                         <Text style={styles.receiptTotalLabel}>Commission</Text>
                         <Text style={styles.receiptTotalValue}>₹{commissionAmountVal.toFixed(2)}</Text>
                       </View>
+                      {packagingFee > 0 && (
+                        <View style={styles.receiptTotalRow}>
+                          <Text style={styles.receiptTotalLabel}>Packing Charges</Text>
+                          <Text style={[styles.receiptTotalValue, { color: '#0AB28D' }]}>
+                            +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                          </Text>
+                        </View>
+                      )}
                       <Text style={styles.dashedDivider}>---------------------------------------------</Text>
                       <View style={styles.receiptGrandTotalRow}>
                         <Text style={styles.receiptGrandTotalLabel}>Net Receivable</Text>

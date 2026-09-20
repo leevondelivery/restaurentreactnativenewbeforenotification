@@ -252,6 +252,27 @@ export default function NotificationsScreen() {
               0
             );
 
+            // DB Packaging Fee extraction (supports packagingFee and all common DB aliases)
+            const packagingFee = Number(
+              order.packagingFee ??
+              order.orderData?.packagingFee ??
+              order.packagingCharges ??
+              order.orderData?.packagingCharges ??
+              order.packagingCharge ??
+              order.orderData?.packagingCharge ??
+              order.packingFee ??
+              order.orderData?.packingFee ??
+              order.packingCharges ??
+              order.orderData?.packingCharges ??
+              order.packingCharge ??
+              order.orderData?.packingCharge ??
+              order.packaging_fee ??
+              order.packing_fee ??
+              0
+            ) || 0;
+
+            const totalNetEarnings = netRestaurantTotal + packagingFee;
+
             const keepPercentage = 100 - commRate;
 
             return (
@@ -301,11 +322,21 @@ export default function NotificationsScreen() {
 
                 <View style={styles.divider} />
 
+                {/* Packaging Fee / Packing Charges Row from DB */}
+                {packagingFee > 0 && (
+                  <View style={styles.packingChargesRow}>
+                    <Text style={styles.packingChargesLabel}>Packing Charges</Text>
+                    <Text style={styles.packingChargesVal}>
+                      +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
                 {/* Net Earnings Summary */}
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Net Earnings</Text>
                   <Text style={styles.summaryVal}>
-                    ₹{Number(netRestaurantTotal).toFixed(2)}
+                    ₹{Number(totalNetEarnings).toFixed(2)}
                   </Text>
                 </View>
 
@@ -679,6 +710,23 @@ const styles = StyleSheet.create({
     height: 1.5,
     backgroundColor: '#555555',
     marginVertical: 12,
+  },
+  packingChargesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  packingChargesLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#444444',
+    flex: 1,
+  },
+  packingChargesVal: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0AB28D',
   },
   summaryRow: {
     flexDirection: 'row',

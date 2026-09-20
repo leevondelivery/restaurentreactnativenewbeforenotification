@@ -173,7 +173,23 @@ export default function OrderInvoiceScreen() {
   const cgstLabel = `CGST (${halfRate}%)`;
   const sgstLabel = `SGST (${halfRate}%)`;
 
-  const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal)).toFixed(2));
+  const packagingFee = Number(
+    order?.packagingFee ??
+    order?.orderData?.packagingFee ??
+    order?.packagingCharges ??
+    order?.orderData?.packagingCharges ??
+    order?.packagingCharge ??
+    order?.orderData?.packagingCharge ??
+    order?.packingFee ??
+    order?.orderData?.packingFee ??
+    order?.packingCharges ??
+    order?.orderData?.packingCharges ??
+    order?.packaging_fee ??
+    order?.packing_fee ??
+    0
+  ) || 0;
+
+  const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal) + packagingFee).toFixed(2));
 
   const handlePrintReceipt = async () => {
     try {
@@ -307,6 +323,11 @@ export default function OrderInvoiceScreen() {
                 <span>${sgstLabel}</span>
                 <span>₹${sgstVal.toFixed(2)}</span>
               </div>
+              ${packagingFee > 0 ? `
+              <div class="row-flex">
+                <span>Packing Charges</span>
+                <span>+₹${packagingFee.toFixed(2)}</span>
+              </div>` : ''}
 
               <div class="total-row">
                 <span>Grand Total</span>
@@ -473,6 +494,14 @@ export default function OrderInvoiceScreen() {
                 ₹{sgstVal.toFixed(2)}
               </Text>
             </View>
+            {packagingFee > 0 && (
+              <View style={[styles.receiptGrandTotalRow, { paddingLeft: 12 }]}>
+                <Text style={[styles.receiptGrandTotalLabel, { fontSize: 13, color: '#555555' }]}>Packing Charges</Text>
+                <Text style={[styles.receiptGrandTotalVal, { fontSize: 14, color: '#0AB28D' }]}>
+                  +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                </Text>
+              </View>
+            )}
 
             <Text style={styles.dashedDividerText}>{dashedLine}</Text>
 
