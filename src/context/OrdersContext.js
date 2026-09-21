@@ -12,6 +12,7 @@ import { playOrderSound } from '@/services/soundService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
+import { BASE_URL } from '@/constants/api';
 
 const OrdersContext = createContext();
 

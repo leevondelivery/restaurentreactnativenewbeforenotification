@@ -21,10 +21,6 @@
       "package": "com.restaurent.app",
       "googleServicesFile": "./google-services.json"
     },
-    "notification": {
-      "icon": "./assets/images/android-icon-monochrome.png",
-      "color": "#000000"
-    },
     "web": {
       "output": "single",
       "favicon": "./assets/images/favicon.png"

@@ -33,6 +33,22 @@ module.exports = function withAndroidNotificationManifest(config) {
         fs.mkdirSync(drawableResDir, { recursive: true });
       }
 
+      // Ensure notification_icon_color exists in values/colors.xml
+      const valuesDir = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res', 'values');
+      const colorsXmlPath = path.join(valuesDir, 'colors.xml');
+      try {
+        if (fs.existsSync(colorsXmlPath)) {
+          let colorsContent = fs.readFileSync(colorsXmlPath, 'utf8');
+          if (!colorsContent.includes('notification_icon_color')) {
+            colorsContent = colorsContent.replace(
+              '</resources>',
+              '  <color name="notification_icon_color">#023c69</color>\n</resources>'
+            );
+            fs.writeFileSync(colorsXmlPath, colorsContent, 'utf8');
+          }
+        }
+      } catch (e) {}
+
       // Copy sound
       const soundSource = path.join(projectRoot, 'assets', 'ordernotification.wav');
       if (fs.existsSync(soundSource)) {
@@ -42,6 +58,7 @@ module.exports = function withAndroidNotificationManifest(config) {
 
       // Copy small monochrome icon for status bar & device notification icon targets
       const monoSource = path.join(projectRoot, 'assets', 'images', 'android-icon-monochrome.png');
+      const bgSource = path.join(projectRoot, 'assets', 'images', 'android-icon-background.png');
       const logoSource = path.join(projectRoot, 'assets', 'images', 'leevon-logo-padded.png');
       const iconSource = path.join(projectRoot, 'assets', 'images', 'icon.png');
       const bestSmallSource = fs.existsSync(monoSource)
@@ -115,7 +132,7 @@ module.exports = function withAndroidNotificationManifest(config) {
             }
 
             // Sync app launcher icons to mipmap folders using full-color Leevon logo
-            if (folder.startsWith('mipmap') && fs.existsSync(logoSource)) {
+            if (folder.startsWith('mipmap')) {
               try {
                 // Delete stale webp icons that may contain old Expo default logo
                 ['ic_launcher.webp', 'ic_launcher_background.webp', 'ic_launcher_foreground.webp', 'ic_launcher_round.webp', 'ic_launcher_monochrome.webp'].forEach((w) => {
@@ -123,9 +140,15 @@ module.exports = function withAndroidNotificationManifest(config) {
                   if (fs.existsSync(wPath)) fs.unlinkSync(wPath);
                 });
                 // Copy Leevon logo as PNG launcher icons
-                ['ic_launcher.png', 'ic_launcher_foreground.png', 'ic_launcher_round.png'].forEach((p) => {
-                  fs.copyFileSync(logoSource, path.join(folderPath, p));
-                });
+                if (fs.existsSync(logoSource)) {
+                  ['ic_launcher.png', 'ic_launcher_foreground.png', 'ic_launcher_round.png'].forEach((p) => {
+                    fs.copyFileSync(logoSource, path.join(folderPath, p));
+                  });
+                }
+                const bestBgSource = fs.existsSync(bgSource) ? bgSource : logoSource;
+                if (fs.existsSync(bestBgSource)) {
+                  fs.copyFileSync(bestBgSource, path.join(folderPath, 'ic_launcher_background.png'));
+                }
                 if (fs.existsSync(bestSmallSource)) {
                   fs.copyFileSync(bestSmallSource, path.join(folderPath, 'ic_launcher_monochrome.png'));
                 }

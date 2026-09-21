@@ -295,7 +295,23 @@ export default function TrackerScreen() {
     const cgstLabel = `CGST (${halfRate}%)`;
     const sgstLabel = `SGST (${halfRate}%)`;
 
-    const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal)).toFixed(2));
+    const packagingFee = Number(
+      order.packagingFee ??
+      order.orderData?.packagingFee ??
+      order.packagingCharges ??
+      order.orderData?.packagingCharges ??
+      order.packagingCharge ??
+      order.orderData?.packagingCharge ??
+      order.packingFee ??
+      order.orderData?.packingFee ??
+      order.packingCharges ??
+      order.orderData?.packingCharges ??
+      order.packaging_fee ??
+      order.packing_fee ??
+      0
+    ) || 0;
+
+    const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal) + packagingFee).toFixed(2));
 
     return `
       <!DOCTYPE html>
@@ -430,6 +446,11 @@ export default function TrackerScreen() {
               <span>${sgstLabel}</span>
               <span>₹${sgstVal.toFixed(2)}</span>
             </div>
+            ${packagingFee > 0 ? `
+            <div class="row-flex">
+              <span>Packing Charges</span>
+              <span>+₹${packagingFee.toFixed(2)}</span>
+            </div>` : ''}
 
             <div class="total-row">
               <span>Grand Total</span>
@@ -771,9 +792,27 @@ export default function TrackerScreen() {
             0
           );
 
-          const finalTotalPrice = commRate > 0
+          const packagingFee = Number(
+            order.packagingFee ??
+            order.orderData?.packagingFee ??
+            order.packagingCharges ??
+            order.orderData?.packagingCharges ??
+            order.packagingCharge ??
+            order.orderData?.packagingCharge ??
+            order.packingFee ??
+            order.orderData?.packingFee ??
+            order.packingCharges ??
+            order.orderData?.packingCharges ??
+            order.packaging_fee ??
+            order.packing_fee ??
+            0
+          ) || 0;
+
+          const baseTotalPrice = commRate > 0
             ? calculatedNetEarnings
             : (Number(order.totalPriceAfterCommission ?? order.netEarnings ?? calculatedNetEarnings) || calculatedNetEarnings);
+
+          const finalTotalPrice = baseTotalPrice + packagingFee;
 
           const orderKey = `${order._id || order.orderId || orderIdVal || 'track'}_${orderIdx}`;
 
@@ -834,6 +873,16 @@ export default function TrackerScreen() {
               ))}
 
               <View style={styles.orderDivider} />
+
+              {/* Packaging Fee from DB */}
+              {packagingFee > 0 && (
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingHorizontal: 4 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '500', color: '#555555' }}>Packing Charges</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#0AB28D' }}>
+                    +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                  </Text>
+                </View>
+              )}
 
               {/* Totals Row */}
               <View style={styles.totalsRow}>
@@ -1060,7 +1109,23 @@ export default function TrackerScreen() {
                   const cgstLabel = `CGST (${halfRate}%)`;
                   const sgstLabel = `SGST (${halfRate}%)`;
 
-                  const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal)).toFixed(2));
+                  const packagingFee = Number(
+                    selectedInvoiceOrder.packagingFee ??
+                    selectedInvoiceOrder.orderData?.packagingFee ??
+                    selectedInvoiceOrder.packagingCharges ??
+                    selectedInvoiceOrder.orderData?.packagingCharges ??
+                    selectedInvoiceOrder.packagingCharge ??
+                    selectedInvoiceOrder.orderData?.packagingCharge ??
+                    selectedInvoiceOrder.packingFee ??
+                    selectedInvoiceOrder.orderData?.packingFee ??
+                    selectedInvoiceOrder.packingCharges ??
+                    selectedInvoiceOrder.orderData?.packingCharges ??
+                    selectedInvoiceOrder.packaging_fee ??
+                    selectedInvoiceOrder.packing_fee ??
+                    0
+                  ) || 0;
+
+                  const grandTotalVal = Number((itemsSubtotal + (cgstVal + sgstVal) + packagingFee).toFixed(2));
 
                   return (
                     <>
@@ -1076,6 +1141,14 @@ export default function TrackerScreen() {
                         <Text style={[styles.receiptTotalLabel, { fontSize: 13, color: '#555555' }]}>{sgstLabel}</Text>
                         <Text style={[styles.receiptTotalValue, { fontSize: 14, color: '#555555' }]}>₹{sgstVal.toFixed(2)}</Text>
                       </View>
+                      {packagingFee > 0 && (
+                        <View style={styles.receiptTotalRow}>
+                          <Text style={styles.receiptTotalLabel}>Packing Charges</Text>
+                          <Text style={[styles.receiptTotalValue, { color: '#0AB28D' }]}>
+                            +₹{packagingFee % 1 === 0 ? packagingFee : Number(packagingFee).toFixed(2)}
+                          </Text>
+                        </View>
+                      )}
                       <Text style={styles.dashedDivider}>---------------------------------------------</Text>
                       <View style={styles.receiptGrandTotalRow}>
                         <Text style={styles.receiptGrandTotalLabel}>Grand Total</Text>
