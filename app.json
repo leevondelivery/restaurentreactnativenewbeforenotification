@@ -2,7 +2,7 @@
   "expo": {
     "name": "Leevon Delivery Restaurent Partner",
     "slug": "restaurentreactnativelatest",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/leevon-logo-padded.png",
     "scheme": "restaurentreactnativelatest",
@@ -11,6 +11,7 @@
       "icon": "./assets/images/leevon-logo-padded.png"
     },
     "android": {
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/images/leevon-logo-padded.png",
