@@ -65,3 +65,5 @@ export const stopOrderNotificationSound = async (orderId) => {
 export const setupNotificationChannel = async () => {};
 export const initFCMToken = async () => {};
 export const clearFCMTokenOnLogout = async () => {};
+export const checkIsThisDeviceActiveForFCM = async () => false;
+

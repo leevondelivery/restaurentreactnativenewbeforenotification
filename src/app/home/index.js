@@ -52,6 +52,7 @@ export default function HomeScreen() {
   };
 
   const syncNotifStatusWithBackend = useCallback(async () => {
+    if (Platform.OS === 'web') return;
     try {
       const dbFcmToken = reduxUserData?.fcmToken || userData?.fcmToken;
       if (!dbFcmToken || String(dbFcmToken).trim() === '') {
@@ -723,31 +724,33 @@ export default function HomeScreen() {
           </Animated.View>
         </TouchableOpacity>
 
-        {/* ── NOTIFICATIONS ON / OFF Pill ── */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={handleNotifToggle}
-          disabled={isTogglingNotif}
-          style={[
-            styles.notifPillButton,
-            { backgroundColor: isNotifActive ? '#05B686' : '#4B5563' }
-          ]}
-        >
-          {isTogglingNotif ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons
-                name={isNotifActive ? 'notifications' : 'notifications-off'}
-                size={18}
-                color="#FFFFFF"
-              />
-              <Text style={styles.notifPillText}>
-                {isNotifActive ? 'NOTIFICATIONS ON' : 'NOTIFICATIONS OFF'}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
+        {/* ── NOTIFICATIONS ON / OFF Pill (Mobile Only) ── */}
+        {Platform.OS !== 'web' && (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleNotifToggle}
+            disabled={isTogglingNotif}
+            style={[
+              styles.notifPillButton,
+              { backgroundColor: isNotifActive ? '#05B686' : '#4B5563' }
+            ]}
+          >
+            {isTogglingNotif ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons
+                  name={isNotifActive ? 'notifications' : 'notifications-off'}
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.notifPillText}>
+                  {isNotifActive ? 'NOTIFICATIONS ON' : 'NOTIFICATIONS OFF'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
 
         {/* ── MY MENU Button ── */}
         <TouchableOpacity
