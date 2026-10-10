@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import { useOrders } from '@/context/OrdersContext';
 import { stopOrderNotificationSound } from '@/services/NotificationService';
 import { getDisplayOrderId, getEffectiveCommissionRate } from '../orders';
+import RestaurantDropdown from '@/components/RestaurantDropdown';
 
 import './notifications.css';
 
@@ -53,7 +54,7 @@ const getOrderCreationDate = (order) => {
 
 export default function NotificationsScreen() {
   const router = useRouter();
-  const { incomingOrders, acceptOrder: contextAcceptOrder, rejectOrder: contextRejectOrder, fetchGlobalOrders, loading, restaurantInfo } = useOrders();
+  const { incomingOrders, acceptOrder: contextAcceptOrder, rejectOrder: contextRejectOrder, fetchGlobalOrders, loading, restaurantInfo, hasMultipleRestaurants } = useOrders();
   const safeIncomingOrders = Array.isArray(incomingOrders) ? incomingOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [rejectingLoading, setRejectingLoading] = useState(false);
@@ -170,6 +171,13 @@ export default function NotificationsScreen() {
           />
         }
       >
+        {/* ── Top-Left Restaurant Selector Dropdown (If multi-restaurant) ── */}
+        {hasMultipleRestaurants && (
+          <View style={{ width: '100%', maxWidth: 400, alignItems: 'flex-start', marginBottom: 10 }}>
+            <RestaurantDropdown />
+          </View>
+        )}
+
         {/* Header Pill */}
         <View style={styles.topHeaderPill}>
           <Ionicons name="notifications" size={20} color="#0AB28D" />

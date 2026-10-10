@@ -6,6 +6,7 @@ import {
   fetchIncomingOrdersContext,
   insertPendingPayment,
   updateOrderPrepStatus,
+  fetchAllRestaurants,
 } from '@/services/api';
 import { displayOrderNotification, extractRestId, isOrderDismissed, isOrderNotified, markOrderAsNotified, stopOrderNotificationSound } from '@/services/NotificationService';
 import { playOrderSound } from '@/services/soundService';
@@ -13,6 +14,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { BASE_URL } from '@/constants/api';
+import { useDispatch } from 'react-redux';
+import { setUser } from '@/store/userSlice';
 
 const OrdersContext = createContext();
 
@@ -27,7 +30,15 @@ export const OrdersProvider = ({ children }) => {
   const [incomingCount, setIncomingCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const seenIncomingIdsRef = useRef(new Set());
+  const dispatch = useDispatch();
   const isInitialFetchRef = useRef(true);
+  const [assignedRestaurants, setAssignedRestaurants] = useState([]);
+  const [currentRestId, setCurrentRestId] = useState('');
+  const [pendingCountsByRestId, setPendingCountsByRestId] = useState({});
+  const assignedRestaurantsRef = useRef([]);
+  const currentRestIdRef = useRef('');
+  const otherRingingCountRef = useRef(0);
+
   const [restaurantInfo, setRestaurantInfo] = useState({
     restId: '',
     name: '',
@@ -43,11 +54,12 @@ export const OrdersProvider = ({ children }) => {
   const pollingTimerRef = useRef(null);
   const processedOrderIdsRef = useRef(new Set());
 
-  // Load stored restaurant identity & commission from AsyncStorage
+  // Load stored restaurant identity, subrestaurants list & commission from AsyncStorage
   const loadRestaurantInfo = useCallback(async () => {
     try {
       const storedUserStr = await AsyncStorage.getItem('userData');
       const storedRestId = await AsyncStorage.getItem('restId');
+      const storedSelected = await AsyncStorage.getItem('selectedRestId');
       const storedCommission = await AsyncStorage.getItem('commission');
       const storedAddress = await AsyncStorage.getItem('address');
       const storedFssai = await AsyncStorage.getItem('fssai');
@@ -63,19 +75,140 @@ export const OrdersProvider = ({ children }) => {
         }
       }
 
-      const restId =
+      // 1. Resolve restaurant names & profiles from backend /api/users
+      let allUsers = [];
+      try {
+        allUsers = await fetchAllRestaurants();
+      } catch (e) {}
+
+      // 2. Identify current user from local storage
+      const targetRestId = String(
+        storedSelected ||
         storedRestId ||
         parsedUser?.restId ||
         parsedUser?.restaurantId ||
         parsedUser?.restaurant_id ||
-        parsedUser?._id ||
-        '';
+        ''
+      ).trim();
+      const targetUserId = String(parsedUser?._id || parsedUser?.id || '').trim();
+      const targetPhone = String(parsedUser?.phone || parsedUser?.mobileNumber || '').trim();
+      const targetEmail = String(parsedUser?.email || '').trim().toLowerCase();
 
-      const name =
-        parsedUser?.name ||
-        parsedUser?.restaurantName ||
-        parsedUser?.restName ||
-        '';
+      // 3. Find logged-in user directly in MongoDB /api/users to get latest live subrestaurentsId
+      const loggedInUserFromDb = (Array.isArray(allUsers) ? allUsers : []).find((u) => {
+        const uRestId = String(u.restId || u.restaurantId || '').trim();
+        const uId = String(u._id || u.id || '').trim();
+        const uPhone = String(u.phone || u.mobileNumber || '').trim();
+        const uEmail = String(u.email || '').trim().toLowerCase();
+
+        return (
+          (targetRestId && uRestId === targetRestId) ||
+          (targetUserId && uId === targetUserId) ||
+          (targetPhone && uPhone === targetPhone) ||
+          (targetEmail && uEmail === targetEmail)
+        );
+      });
+
+      // 4. Extract subrestaurentsId across all spelling/casing variations
+      const rawSub =
+        loggedInUserFromDb?.subrestaurentsId ??
+        loggedInUserFromDb?.subrestaurantsId ??
+        loggedInUserFromDb?.subrestaurents_id ??
+        loggedInUserFromDb?.subrestaurants_id ??
+        parsedUser?.subrestaurentsId ??
+        parsedUser?.subrestaurantsId ??
+        parsedUser?.subrestaurents_id ??
+        parsedUser?.subrestaurants_id ??
+        parsedUser?.user?.subrestaurentsId ??
+        parsedUser?.user?.subrestaurantsId;
+
+      const parseSubIds = (raw) => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) {
+          return raw.map((x) => String(x).trim()).filter(Boolean);
+        }
+        if (typeof raw === 'string') {
+          return raw.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+        }
+        return [];
+      };
+
+      const subIds = parseSubIds(rawSub);
+
+      // Keep local userData synced with live subrestaurentsId from backend
+      if (subIds.length > 0 && parsedUser) {
+        parsedUser = {
+          ...parsedUser,
+          subrestaurentsId: subIds,
+          subrestaurantsId: subIds,
+        };
+        AsyncStorage.setItem('userData', JSON.stringify(parsedUser)).catch(() => {});
+        dispatch(setUser(parsedUser));
+      }
+
+      // Collect target restaurant branch IDs (e.g., ["31", "10", "11"])
+      const allIds = [];
+      subIds.forEach((sid) => {
+        const s = String(sid).trim();
+        if (s && !allIds.includes(s)) allIds.push(s);
+      });
+
+      // If user has no subrestaurentsId, fallback to single account restId
+      if (allIds.length === 0 && targetRestId) {
+        allIds.push(targetRestId);
+      }
+
+      let activeRestId = storedSelected || storedRestId || (allIds.length > 0 ? allIds[0] : targetRestId);
+      if (allIds.length > 0 && !allIds.includes(activeRestId)) {
+        activeRestId = allIds[0];
+      }
+
+      let cachedMap = {};
+      try {
+        const c = await AsyncStorage.getItem('cached_all_restaurants_map');
+        if (c) cachedMap = JSON.parse(c);
+      } catch (e) {}
+
+      const mappedList = allIds.map((id) => {
+        const found = (Array.isArray(allUsers) ? allUsers : []).find(
+          (u) =>
+            String(u.restId || u.restaurantId || '').trim().toLowerCase() === id.toLowerCase() ||
+            String(u._id || '').trim().toLowerCase() === id.toLowerCase()
+        );
+        const name =
+          found?.name ||
+          cachedMap[id]?.name ||
+          (id === targetRestId ? (loggedInUserFromDb?.name || parsedUser?.name) : '') ||
+          `Restaurant #${id}`;
+        const comm = Number(found?.commission || found?.commissionRate || cachedMap[id]?.commission || 5);
+        return {
+          restId: id,
+          name,
+          commission: comm,
+          isActive: found ? (found.isActive ?? true) : true,
+          address: found?.address || found?.location || '',
+          rawUser: found || null,
+        };
+      });
+
+      setAssignedRestaurants(mappedList);
+      assignedRestaurantsRef.current = mappedList;
+      setCurrentRestId(activeRestId);
+      currentRestIdRef.current = activeRestId;
+
+      // Save mapped restaurant names to cache
+      if (mappedList.length > 0) {
+        const mapToCache = {};
+        mappedList.forEach((r) => {
+          mapToCache[r.restId] = { name: r.name, commission: r.commission };
+        });
+        AsyncStorage.setItem('cached_all_restaurants_map', JSON.stringify(mapToCache)).catch(() => {});
+      }
+
+      const activeProfile = mappedList.find((r) => r.restId === activeRestId);
+
+      const restId = activeRestId;
+      const name = activeProfile?.name || parsedUser?.name || parsedUser?.restaurantName || `Restaurant #${activeRestId}`;
 
       const phone =
         parsedUser?.phone ||
@@ -92,7 +225,7 @@ export const OrdersProvider = ({ children }) => {
         parsedUser?.gstNumber ||
         '37AANFL1602Q1ZW';
 
-      let commission = 0;
+      let commission = activeProfile?.commission || 0;
       let hasUserComm = false;
       if (parsedUser && typeof parsedUser === 'object') {
         const candKeys = [
@@ -132,13 +265,17 @@ export const OrdersProvider = ({ children }) => {
 
       await AsyncStorage.setItem('commission', String(commission));
       if (parsedUser) {
-        parsedUser.commission = commission;
-        parsedUser.commissionRate = commission;
+        parsedUser = {
+          ...parsedUser,
+          commission,
+          commissionRate: commission,
+        };
         await AsyncStorage.setItem('userData', JSON.stringify(parsedUser));
       }
 
       const address =
         storedAddress ||
+        activeProfile?.address ||
         parsedUser?.address ||
         parsedUser?.restAddress ||
         parsedUser?.restaurantAddress ||
@@ -192,14 +329,16 @@ export const OrdersProvider = ({ children }) => {
     loadRestaurantInfo();
   }, [loadRestaurantInfo]);
 
-  // Instantly re-hydrate cached orders from AsyncStorage on app launch (0ms display)
+  // Instantly re-hydrate cached orders from AsyncStorage on app launch per active restaurant (0ms display)
   useEffect(() => {
     (async () => {
       try {
+        const storedRestId = (await AsyncStorage.getItem('selectedRestId')) || (await AsyncStorage.getItem('restId'));
+        const restSuffix = storedRestId ? `_${storedRestId}` : '';
         const [cAccepted, cTrack, cIncoming] = await Promise.all([
-          AsyncStorage.getItem('cached_accepted_orders'),
-          AsyncStorage.getItem('cached_tracker_orders'),
-          AsyncStorage.getItem('cached_incoming_orders'),
+          AsyncStorage.getItem(`cached_accepted_orders${restSuffix}`) || AsyncStorage.getItem('cached_accepted_orders'),
+          AsyncStorage.getItem(`cached_tracker_orders${restSuffix}`) || AsyncStorage.getItem('cached_tracker_orders'),
+          AsyncStorage.getItem(`cached_incoming_orders${restSuffix}`) || AsyncStorage.getItem('cached_incoming_orders'),
         ]);
         if (cAccepted) {
           const parsed = JSON.parse(cAccepted);
@@ -223,7 +362,7 @@ export const OrdersProvider = ({ children }) => {
   }, []);
 
   // Fetch both accepted orders and incoming orders from API
-  const fetchGlobalOrders = useCallback(async (isPolling = false) => {
+  const fetchGlobalOrders = useCallback(async (isPolling = false, overrideRestId = null) => {
     if (!isPolling) {
       setLoading(true);
     }
@@ -233,18 +372,19 @@ export const OrdersProvider = ({ children }) => {
       await loadRestaurantInfo();
 
       const storedUserStr = await AsyncStorage.getItem('userData');
+      const storedSelected = await AsyncStorage.getItem('selectedRestId');
       const storedRestId = await AsyncStorage.getItem('restId');
-      let restId = storedRestId || '';
-      if (storedUserStr) {
+      let restId = String(overrideRestId || currentRestIdRef.current || storedSelected || storedRestId || '').trim();
+      if (!restId && storedUserStr) {
         try {
           const u = JSON.parse(storedUserStr);
-          restId =
-            storedRestId ||
+          restId = String(
             u?.restId ||
             u?.restaurantId ||
             u?.restaurant_id ||
             u?._id ||
-            '';
+            ''
+          ).trim();
         } catch (e) { }
       }
 
@@ -259,16 +399,15 @@ export const OrdersProvider = ({ children }) => {
       let rawTrack = null;
       let incomingData = null;
 
-      try {
-        const controller = new AbortController();
-        const tid = setTimeout(() => controller.abort(), 12000); // 12-second timeout
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 12000); // 12-second timeout
 
+      try {
         const [resAccepted, resTrack, resIncoming] = await Promise.allSettled([
           fetchAcceptedOrders(restId, controller.signal),
           fetchAcceptedByRestaurants(restId, controller.signal),
           fetchIncomingOrdersContext(restId, controller.signal),
         ]);
-        clearTimeout(tid);
 
         if (resAccepted.status === 'fulfilled' && resAccepted.value && resAccepted.value.ok) {
           try {
@@ -315,6 +454,8 @@ export const OrdersProvider = ({ children }) => {
         });
 
         setOrders(filteredAccepted);
+        // Isolate cache per restaurant
+        AsyncStorage.setItem(`cached_accepted_orders_${restId}`, JSON.stringify(filteredAccepted)).catch(() => { });
         AsyncStorage.setItem('cached_accepted_orders', JSON.stringify(filteredAccepted)).catch(() => { });
         filteredAccepted.forEach((o) => {
           if (o._id) processedOrderIdsRef.current.add(String(o._id));
@@ -327,7 +468,6 @@ export const OrdersProvider = ({ children }) => {
           .map((o) => {
             if (!o) return o;
             const oId = String(o._id || o.orderId || '').trim();
-            // If acceptedOrders (from acceptedorders collection) is updated to Ready, ensure tracker is in sync
             const accMatch = Array.isArray(acceptedOrdersData)
               ? acceptedOrdersData.find((acc) => String(acc._id || acc.orderId || '').trim() === oId)
               : null;
@@ -364,8 +504,13 @@ export const OrdersProvider = ({ children }) => {
             return true;
           });
         setTrackerOrders(filteredTrack);
+        // Isolate cache per restaurant
+        AsyncStorage.setItem(`cached_tracker_orders_${restId}`, JSON.stringify(filteredTrack)).catch(() => { });
         AsyncStorage.setItem('cached_tracker_orders', JSON.stringify(filteredTrack)).catch(() => { });
       }
+
+      let activeIncomingCount = 0;
+      let activeRingingList = [];
 
       if (Array.isArray(incomingData)) {
         // Filter by restaurantId match and filter out any orders processed locally
@@ -399,13 +544,8 @@ export const OrdersProvider = ({ children }) => {
           }
         });
 
-        // Ensure continuous in-app sound loop plays until all incoming orders are accepted or rejected
-        const activeRinging = filteredIncoming.filter((o) => !isOrderDismissed(o._id || o.orderId));
-        if (activeRinging.length > 0) {
-          playOrderSound();
-        } else {
-          stopOrderNotificationSound();
-        }
+        activeRingingList = filteredIncoming.filter((o) => !isOrderDismissed(o._id || o.orderId));
+        activeIncomingCount = filteredIncoming.length;
 
         if (isInitialFetchRef.current) {
           isInitialFetchRef.current = false;
@@ -413,9 +553,10 @@ export const OrdersProvider = ({ children }) => {
 
         setIncomingOrders(filteredIncoming);
         setIncomingCount(filteredIncoming.length);
+        // Isolate cache per restaurant
+        AsyncStorage.setItem(`cached_incoming_orders_${restId}`, JSON.stringify(filteredIncoming)).catch(() => { });
         AsyncStorage.setItem('cached_incoming_orders', JSON.stringify(filteredIncoming)).catch(() => { });
       } else {
-        stopOrderNotificationSound();
         setIncomingOrders((prev) => {
           const filtered = prev.filter((o) => {
             const id1 = String(o._id || '');
@@ -423,8 +564,77 @@ export const OrdersProvider = ({ children }) => {
             return !processedOrderIdsRef.current.has(id1) && !processedOrderIdsRef.current.has(id2);
           });
           setIncomingCount(filtered.length);
+          activeIncomingCount = filtered.length;
+          activeRingingList = filtered.filter((o) => !isOrderDismissed(o._id || o.orderId));
           return filtered;
         });
+      }
+
+      // Check OTHER assigned restaurants in parallel for incoming orders
+      const otherIds = (assignedRestaurantsRef.current || [])
+        .map((r) => String(r.restId).trim())
+        .filter((id) => id && id.toLowerCase() !== restId.toLowerCase());
+
+      const newCounts = { [restId]: activeIncomingCount };
+      let otherUndismissedCount = 0;
+
+      if (otherIds.length > 0) {
+        try {
+          const otherResults = await Promise.allSettled(
+            otherIds.map((otherId) =>
+              fetchIncomingOrdersContext(otherId, controller.signal)
+                .then(async (res) => {
+                  if (res && res.ok) {
+                    const json = await res.json();
+                    const data = json.orders || json.incomingOrders || (Array.isArray(json) ? json : []);
+                    return { otherId, data };
+                  }
+                  return { otherId, data: [] };
+                })
+                .catch(() => ({ otherId, data: [] }))
+            )
+          );
+
+          otherResults.forEach((res) => {
+            if (res.status === 'fulfilled' && res.value) {
+              const { otherId, data } = res.value;
+              const validOrders = (Array.isArray(data) ? data : []).filter((o) => {
+                const id1 = String(o._id || '');
+                const id2 = String(o.orderId || '');
+                return !processedOrderIdsRef.current.has(id1) && !processedOrderIdsRef.current.has(id2);
+              });
+              newCounts[otherId] = validOrders.length;
+
+              // Sound detection for newly arrived orders of other assigned restaurant!
+              validOrders.forEach((ord) => {
+                const key = String(ord._id || ord.orderId || '');
+                if (key) {
+                  const alreadyNotified = seenIncomingIdsRef.current.has(key) || isOrderNotified(key);
+                  seenIncomingIdsRef.current.add(key);
+                  markOrderAsNotified(key);
+                  if (!alreadyNotified && !isInitialFetchRef.current) {
+                    displayOrderNotification(ord, true); // Plays sound!
+                  }
+                }
+              });
+
+              const ringingForOther = validOrders.filter((o) => !isOrderDismissed(o._id || o.orderId));
+              otherUndismissedCount += ringingForOther.length;
+            }
+          });
+        } catch (e) { }
+      }
+
+      clearTimeout(tid);
+      setPendingCountsByRestId(newCounts);
+      otherRingingCountRef.current = otherUndismissedCount;
+
+      // Ensure sound plays if CURRENT active restaurant OR ANY OTHER assigned restaurant has active undismissed orders!
+      const totalRinging = activeRingingList.length + otherUndismissedCount;
+      if (totalRinging > 0) {
+        playOrderSound();
+      } else {
+        stopOrderNotificationSound();
       }
     } catch (err) {
       console.error('OrdersContext: fetchGlobalOrders error:', err);
@@ -434,6 +644,88 @@ export const OrdersProvider = ({ children }) => {
       }
     }
   }, []);
+
+  // Switch active restaurant with isolated storage & instantaneous UI update
+  const switchRestaurant = useCallback(async (targetRestId) => {
+    const newId = String(targetRestId || '').trim();
+    if (!newId || newId.toLowerCase() === String(currentRestIdRef.current).trim().toLowerCase()) return;
+
+    try {
+      console.log(`[OrdersContext] Switching active restaurant to restId="${newId}"...`);
+
+      // 1. Update AsyncStorage
+      await AsyncStorage.setItem('restId', newId);
+      await AsyncStorage.setItem('selectedRestId', newId);
+
+      // 2. Find target profile from assigned list
+      const targetProfile = assignedRestaurantsRef.current.find(
+        (r) => String(r.restId).trim().toLowerCase() === newId.toLowerCase()
+      );
+      const targetName = targetProfile?.name || `Restaurant #${newId}`;
+      const targetCommission = targetProfile?.commission || 5;
+
+      // 3. Update master userData in AsyncStorage and Redux without losing subrestaurantsId
+      const storedUserStr = await AsyncStorage.getItem('userData');
+      if (storedUserStr) {
+        try {
+          const u = JSON.parse(storedUserStr);
+          const updatedUser = {
+            ...u,
+            restId: newId,
+            restaurantId: newId,
+            name: targetName,
+            subrestaurentsId: u.subrestaurentsId || u.subrestaurantsId,
+            subrestaurantsId: u.subrestaurentsId || u.subrestaurantsId,
+          };
+          if (targetProfile?.rawUser) {
+            if (typeof targetProfile.rawUser.isActive === 'boolean') {
+              updatedUser.isActive = targetProfile.rawUser.isActive;
+              updatedUser.is_active = targetProfile.rawUser.isActive;
+              updatedUser.isOpen = targetProfile.rawUser.isActive;
+              updatedUser.is_open = targetProfile.rawUser.isActive;
+              updatedUser.status = targetProfile.rawUser.isActive ? 'active' : 'closed';
+            }
+          }
+          await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
+          dispatch(setUser(updatedUser));
+        } catch (e) { }
+      }
+
+      // 4. Update state & refs
+      currentRestIdRef.current = newId;
+      setCurrentRestId(newId);
+      setRestaurantInfo((prev) => ({
+        ...prev,
+        restId: newId,
+        name: targetName,
+        commission: targetCommission,
+      }));
+
+      // 5. Load isolated cached orders for new restaurant immediately (never combined)
+      try {
+        const [cAcc, cTrk, cInc] = await Promise.all([
+          AsyncStorage.getItem(`cached_accepted_orders_${newId}`),
+          AsyncStorage.getItem(`cached_tracker_orders_${newId}`),
+          AsyncStorage.getItem(`cached_incoming_orders_${newId}`),
+        ]);
+        setOrders(cAcc ? JSON.parse(cAcc) : []);
+        setTrackerOrders(cTrk ? JSON.parse(cTrk) : []);
+        const parsedInc = cInc ? JSON.parse(cInc) : [];
+        setIncomingOrders(parsedInc);
+        setIncomingCount(parsedInc.length);
+      } catch (e) {
+        setOrders([]);
+        setTrackerOrders([]);
+        setIncomingOrders([]);
+        setIncomingCount(0);
+      }
+
+      // 6. Fetch fresh API data for new restaurant
+      await fetchGlobalOrders(false, newId);
+    } catch (err) {
+      console.error('[OrdersContext] Error switching restaurant:', err);
+    }
+  }, [dispatch, fetchGlobalOrders]);
 
   // Optimistically insert incoming order from FCM push notification payload directly into state (0ms instant display)
   const addIncomingOrderOptimistic = useCallback((orderData) => {
@@ -822,17 +1114,18 @@ export const OrdersProvider = ({ children }) => {
     };
   }, [loadRestaurantInfo, fetchGlobalOrders]);
 
-  // Manage in-app native looping notification sound based on incomingOrders state (ignoring dismissed orders)
+  // Manage in-app native looping notification sound based on active & other assigned restaurants
   useEffect(() => {
     const activeRinging = incomingOrders.filter((o) => !isOrderDismissed(o._id || o.orderId));
-    if (activeRinging.length > 0) {
+    const totalRinging = activeRinging.length + (otherRingingCountRef.current || 0);
+    if (totalRinging > 0) {
       if (AppState.currentState === 'active') {
         playOrderSound();
       }
     } else {
       stopOrderNotificationSound();
     }
-  }, [incomingOrders]);
+  }, [incomingOrders, pendingCountsByRestId]);
 
   // When app returns to active foreground: immediately poll fresh data & update ringing sound
   useEffect(() => {
@@ -840,7 +1133,8 @@ export const OrdersProvider = ({ children }) => {
       if (nextAppState === 'active') {
         fetchGlobalOrders(true);
         const activeRinging = incomingOrders.filter((o) => !isOrderDismissed(o._id || o.orderId));
-        if (activeRinging.length > 0) {
+        const totalRinging = activeRinging.length + (otherRingingCountRef.current || 0);
+        if (totalRinging > 0) {
           playOrderSound();
         }
       } else if (nextAppState !== 'active') {
@@ -848,7 +1142,16 @@ export const OrdersProvider = ({ children }) => {
       }
     });
     return () => sub.remove();
-  }, [incomingOrders, fetchGlobalOrders]);
+  }, [incomingOrders, pendingCountsByRestId, fetchGlobalOrders]);
+
+  const currentRestObj = assignedRestaurants.find(
+    (r) => String(r.restId).trim().toLowerCase() === String(currentRestId).trim().toLowerCase()
+  );
+  const currentRestaurantName = currentRestObj?.name || restaurantInfo.name || '';
+  const hasMultipleRestaurants = assignedRestaurants.length > 1;
+  const hasPendingOtherRestaurantOrders = Object.entries(pendingCountsByRestId).some(
+    ([id, cnt]) => String(id).trim().toLowerCase() !== String(currentRestId).trim().toLowerCase() && cnt > 0
+  );
 
   return (
     <OrdersContext.Provider
@@ -870,6 +1173,14 @@ export const OrdersProvider = ({ children }) => {
         markOrderAsReady,
         setIncomingOrders,
         setIncomingCount,
+        // Multi-restaurant support
+        assignedRestaurants,
+        currentRestId,
+        currentRestaurantName,
+        pendingCountsByRestId,
+        hasPendingOtherRestaurantOrders,
+        hasMultipleRestaurants,
+        switchRestaurant,
       }}
     >
       {children}

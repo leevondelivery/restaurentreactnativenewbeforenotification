@@ -1,3 +1,4 @@
+import RestaurantDropdown from '@/components/RestaurantDropdown';
 import { useOrders } from '@/context/OrdersContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
@@ -138,7 +139,7 @@ const getSafePhone = (obj, fallbackPh = '') => {
 export default function TrackerScreen() {
   const router = useRouter();
   // Fetch data strictly from 'acceptedorders' collection via OrdersContext
-  const { acceptedOrders, loading: globalLoading, fetchGlobalOrders, restaurantInfo, markOrderAsReady } = useOrders();
+  const { acceptedOrders, loading: globalLoading, fetchGlobalOrders, restaurantInfo, markOrderAsReady, hasMultipleRestaurants } = useOrders();
   const rawTrackerList = Array.isArray(acceptedOrders) ? acceptedOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -699,6 +700,13 @@ export default function TrackerScreen() {
           />
         }
       >
+        {/* ── Top-Left Restaurant Selector Dropdown (If multi-restaurant) ── */}
+        {hasMultipleRestaurants && (
+          <View style={{ width: '100%', maxWidth: 400, alignItems: 'flex-start', marginBottom: 10 }}>
+            <RestaurantDropdown />
+          </View>
+        )}
+
         {/* Header Pill */}
         <View style={styles.topHeaderPill}>
           <Ionicons name="checkmark-circle" size={20} color="#0AB28D" />

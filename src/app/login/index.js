@@ -4,13 +4,13 @@ import { clearUser, setUser } from '@/store/userSlice';
 import { extractIsActive } from '@/utils/statusUtils';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import messaging from '@react-native-firebase/messaging';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
+  NativeModules,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -88,11 +88,12 @@ export default function LoginScreen() {
           dispatch(setUser(parsed));
 
           let targetRoute = '/home';
-          if (Platform.OS !== 'web') {
+          if (Platform.OS !== 'web' && NativeModules?.RNFBAppModule && (NativeModules?.NotifeeApiModule || NativeModules?.NotifeeNativeModule)) {
             try {
+              const messagingModule = require('@react-native-firebase/messaging').default;
               const notifeeModule = require('@notifee/react-native').default;
               const initialNotifee = await notifeeModule.getInitialNotification();
-              const initialFCM = await messaging().getInitialNotification();
+              const initialFCM = await messagingModule().getInitialNotification();
               if (initialNotifee || initialFCM) {
                 console.log('[Auth Navigation] App opened from notification -> routing directly to /notifications');
                 targetRoute = '/notifications';
@@ -169,6 +170,7 @@ export default function LoginScreen() {
         console.log('[Login Auth] Extracted isActive status:', extractedIsActive);
 
         const userObj = {
+          ...(data.user || {}),
           _id: data.user?._id || data.user?.id || '',
           name: data.user?.name || '',
           email: data.user?.email || email.trim(),
@@ -183,6 +185,11 @@ export default function LoginScreen() {
           commission: extractedCommission,
           commissionRate: extractedCommission,
           isActive: extractedIsActive,
+          subrestaurentsId:
+            data.user?.subrestaurentsId ??
+            data.user?.subrestaurantsId ??
+            data.user?.subrestaurents_id ??
+            data.user?.subrestaurants_id,
         };
 
         await AsyncStorage.removeItem('commission');

@@ -127,12 +127,20 @@ export const updateRestaurantStatus = (payload) =>
     body: JSON.stringify(payload),
   });
 
-export const fetchRestaurantStatus = async (restaurantId, phone, userId, signal) => {
+export const fetchAllRestaurants = async (signal) => {
   try {
     const res = await fetchWithTimeout(BASE_URL + '/api/users', { signal }, 8000);
-    if (!res.ok) return null;
+    if (!res.ok) return [];
     const data = await res.json();
-    const users = Array.isArray(data.users) ? data.users : [];
+    return Array.isArray(data.users) ? data.users : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+export const fetchRestaurantStatus = async (restaurantId, phone, userId, signal) => {
+  try {
+    const users = await fetchAllRestaurants(signal);
     const targetRestId = String(restaurantId || '').trim().toLowerCase();
     const targetPhone = String(phone || '').trim().toLowerCase();
     const targetUserId = String(userId || '').trim().toLowerCase();

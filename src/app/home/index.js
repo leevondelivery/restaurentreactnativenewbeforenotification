@@ -25,6 +25,7 @@ import {
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { getEffectiveCommissionRate } from '../orders';
+import RestaurantDropdown from '@/components/RestaurantDropdown';
 
 import './home.css';
 
@@ -32,7 +33,7 @@ export default function HomeScreen() {
   const dispatch = useDispatch();
   const router = useRouter();
   const reduxUserData = useSelector((state) => state.user.userData);
-  const { acceptedByRestaurantsOrders, fetchGlobalOrders, restaurantInfo } = useOrders();
+  const { acceptedByRestaurantsOrders, fetchGlobalOrders, restaurantInfo, currentRestId, hasMultipleRestaurants } = useOrders();
   const initialActive = extractIsActiveStrict(reduxUserData) ?? false;
   const [userData, setUserData] = useState(reduxUserData || null);
   const [isOpen, setIsOpen] = useState(initialActive);
@@ -516,6 +517,14 @@ export default function HomeScreen() {
     }, [loadUserData, pollRestaurantStatus])
   );
 
+  // Automatically refresh stats and status when active restaurant is switched
+  useEffect(() => {
+    if (currentRestId) {
+      loadUserData();
+      pollRestaurantStatus();
+    }
+  }, [currentRestId, loadUserData, pollRestaurantStatus]);
+
   const handleToggle = async () => {
     if (isUpdatingStatusRef.current) return;
 
@@ -653,8 +662,15 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* ── Top-Left Restaurant Selector Dropdown (Shown when user has multiple assigned branches) ── */}
+        {hasMultipleRestaurants && (
+          <View style={styles.topHeaderRow}>
+            <RestaurantDropdown />
+          </View>
+        )}
+
         {/* ── Brand Header Pill ── */}
-        <View style={styles.brandPill}>
+        <View style={[styles.brandPill, hasMultipleRestaurants && styles.brandPillWithTopBar]}>
           <View style={styles.brandLogoCircle}>
             <Image
               source={require('../../../assets/images/leevon-logo.png')}
@@ -868,6 +884,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  /* ── Top Header Row for Restaurant Dropdown (Top-Left) ── */
+  topHeaderRow: {
+    width: '100%',
+    maxWidth: 400,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 4 : 8,
+    marginBottom: 8,
+    zIndex: 50,
+  },
+
   /* ── Brand Header Pill ── */
   brandPill: {
     flexDirection: 'row',
@@ -886,6 +914,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 3,
+  },
+  brandPillWithTopBar: {
+    marginTop: 4,
   },
   brandLogoCircle: {
     width: 52,

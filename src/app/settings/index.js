@@ -2,7 +2,6 @@ import { clearFCMTokenOnLogout, stopOrderNotificationSound } from '@/services/No
 import { stopOrderSoundNative } from '@/services/soundService';
 import { clearUser, setUser } from '@/store/userSlice';
 import { Ionicons } from '@expo/vector-icons';
-import notifee from '@notifee/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';

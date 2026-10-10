@@ -1,9 +1,41 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import firebase from '@react-native-firebase/app';
-import messaging from '@react-native-firebase/messaging';
-import notifee, { AndroidImportance, AndroidVisibility, EventType } from '@notifee/react-native';
+import { NativeModules, Platform } from 'react-native';
 import { registerFCMToken } from '@/services/api';
 import { playOrderSound, stopOrderSoundNative } from './soundService';
+
+const isFirebaseNativeAvailable = Platform.OS !== 'web' && !!NativeModules?.RNFBAppModule;
+const isNotifeeNativeAvailable =
+  Platform.OS !== 'web' && !!(NativeModules?.NotifeeApiModule || NativeModules?.NotifeeNativeModule);
+
+let firebase = null;
+let messaging = null;
+let notifee = null;
+let AndroidImportance = { HIGH: 4, DEFAULT: 3, LOW: 2, MIN: 1, NONE: 0 };
+let AndroidVisibility = { PUBLIC: 1, PRIVATE: 0, SECRET: -1 };
+let EventType = { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3, APP_BLOCKED: 4, CHANNEL_BLOCKED: 5, CHANNEL_GROUP_BLOCKED: 6 };
+
+if (isFirebaseNativeAvailable) {
+  try {
+    firebase = require('@react-native-firebase/app').default;
+    messaging = require('@react-native-firebase/messaging').default;
+  } catch (e) {
+    console.warn('[NotificationService] Failed to load @react-native-firebase:', e);
+  }
+} else if (Platform.OS !== 'web') {
+  console.log('[NotificationService] Running in Expo Go (RNFBAppModule not linked). Push notifications are bypassed.');
+}
+
+if (isNotifeeNativeAvailable) {
+  try {
+    const notifeeMod = require('@notifee/react-native');
+    notifee = notifeeMod.default;
+    AndroidImportance = notifeeMod.AndroidImportance || AndroidImportance;
+    AndroidVisibility = notifeeMod.AndroidVisibility || AndroidVisibility;
+    EventType = notifeeMod.EventType || EventType;
+  } catch (e) {
+    console.warn('[NotificationService] Failed to load @notifee/react-native:', e);
+  }
+}
 
 const dismissedOrderIds = new Set();
 
@@ -18,34 +50,42 @@ export function markOrderAsDismissed(orderId) {
 }
 
 // Foreground and Background Notifee event listeners to stop sound immediately when notification is touched, pressed, or dismissed/swiped away
-notifee.onForegroundEvent(async ({ type, detail }) => {
-  const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
-  if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
-    if (type === EventType.DISMISSED && orderId) {
-      markOrderAsDismissed(orderId);
-    }
-    console.log(`[Notifee Foreground] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
-    await stopOrderNotificationSound(orderId);
-  }
-});
+if (notifee) {
+  try {
+    notifee.onForegroundEvent(async ({ type, detail }) => {
+      const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
+      if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
+        if (type === EventType.DISMISSED && orderId) {
+          markOrderAsDismissed(orderId);
+        }
+        console.log(`[Notifee Foreground] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
+        await stopOrderNotificationSound(orderId);
+      }
+    });
 
-notifee.onBackgroundEvent(async ({ type, detail }) => {
-  const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
-  if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
-    if (type === EventType.DISMISSED && orderId) {
-      markOrderAsDismissed(orderId);
-    }
-    console.log(`[Notifee Background] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
-    await stopOrderNotificationSound(orderId);
+    notifee.onBackgroundEvent(async ({ type, detail }) => {
+      const orderId = detail.notification?.data?.orderId || detail.notification?.data?._id;
+      if (type === EventType.PRESS || type === EventType.ACTION_PRESS || type === EventType.DISMISSED) {
+        if (type === EventType.DISMISSED && orderId) {
+          markOrderAsDismissed(orderId);
+        }
+        console.log(`[Notifee Background] Notification ${type === EventType.DISMISSED ? 'DISMISSED' : 'TOUCHED/PRESSED'} — stopping order sound.`);
+        await stopOrderNotificationSound(orderId);
+      }
+    });
+  } catch (e) {
+    console.warn('[NotificationService] Notifee event listener setup notice:', e);
   }
-});
+}
 
 // Safe check to guarantee default Firebase App is initialized
-if (!firebase.apps || firebase.apps.length === 0) {
-  try {
-    firebase.initializeApp();
-  } catch (e) {
-    console.warn('Firebase app safe init notice:', e);
+if (firebase) {
+  if (!firebase.apps || firebase.apps.length === 0) {
+    try {
+      firebase.initializeApp();
+    } catch (e) {
+      console.warn('Firebase app safe init notice:', e);
+    }
   }
 }
 
@@ -76,6 +116,7 @@ export function markOrderAsNotified(orderId) {
  * Initialize Android High-Priority Notification Channel with custom sound (ordernotification.wav)
  */
 export async function setupNotificationChannel() {
+  if (!notifee) return;
   try {
     await notifee.createChannel({
       id: ORDER_CHANNEL_ID,
@@ -98,6 +139,7 @@ setupNotificationChannel();
  * Internal single display trigger
  */
 async function showSingleNotification(orderData, isForeground = false) {
+  if (!notifee) return;
   const orderId = orderData?.orderId || orderData?._id || 'NEW';
   const amount = orderData?.grandTotal || orderData?.totalPrice || orderData?.amount || '0';
   const notificationId = `order_${String(orderId)}`;
@@ -165,7 +207,9 @@ async function showSingleNotification(orderData, isForeground = false) {
  */
 export async function displayOrderNotification(orderData, isForeground = false) {
   try {
-    await setupNotificationChannel();
+    if (notifee) {
+      await setupNotificationChannel();
+    }
 
     const orderId = String(orderData?.orderId || orderData?._id || 'NEW');
     if (orderId && orderId !== 'NEW') {
@@ -178,7 +222,9 @@ export async function displayOrderNotification(orderData, isForeground = false) 
     }
 
     // 1. Display single system notification banner for this order
-    await showSingleNotification(orderData, isForeground);
+    if (notifee) {
+      await showSingleNotification(orderData, isForeground);
+    }
 
     // 2. Play continuous native sound loop until user accepts or rejects
     await playOrderSound();
@@ -209,10 +255,12 @@ export async function stopOrderNotificationSound(orderId) {
     }
 
     // 3. Cancel system notification banner
-    if (orderId) {
-      await notifee.cancelNotification(`order_${String(orderId)}`);
-    } else {
-      await notifee.cancelAllNotifications();
+    if (notifee) {
+      if (orderId) {
+        await notifee.cancelNotification(`order_${String(orderId)}`);
+      } else {
+        await notifee.cancelAllNotifications();
+      }
     }
     console.log(`Order notification sound & 5-sec loop timer stopped for Order #${orderId || 'ALL'}`);
   } catch (err) {
@@ -224,6 +272,7 @@ export async function stopOrderNotificationSound(orderId) {
  * Check if the current device's FCM token matches the token stored in MongoDB backend
  */
 export async function checkIsThisDeviceActiveForFCM(dbFcmToken) {
+  if (!messaging) return false;
   try {
     if (!dbFcmToken || String(dbFcmToken).trim() === '') return false;
     let deviceToken = null;
@@ -241,6 +290,10 @@ export async function checkIsThisDeviceActiveForFCM(dbFcmToken) {
  * Request notification permissions and register FCM token to backend
  */
 export async function initFCMToken(userParam) {
+  if (!messaging) {
+    console.warn('[FCM] Native messaging module not found. Push notifications disabled in Expo Go. (Use a development build for FCM).');
+    return { success: false, error: 'Expo Go: Native Firebase module not available' };
+  }
   try {
     let authStatus = await messaging().hasPermission();
     if (

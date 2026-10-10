@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 
 import CustomLoader from '@/components/CustomLoader';
+import RestaurantDropdown from '@/components/RestaurantDropdown';
 import { useOrders } from '@/context/OrdersContext';
 
 import './orders.css';
@@ -136,7 +137,7 @@ const getSafePhone = (obj, fallbackPh = '') => {
 export default function OrdersScreen() {
   const router = useRouter();
   // Fetch data strictly from 'acceptedbyrestaurent' collection via OrdersContext
-  const { acceptedByRestaurantsOrders, loading, fetchGlobalOrders, restaurantInfo, markOrderAsReady } = useOrders();
+  const { acceptedByRestaurantsOrders, loading, fetchGlobalOrders, restaurantInfo, markOrderAsReady, hasMultipleRestaurants } = useOrders();
   const safeOrders = Array.isArray(acceptedByRestaurantsOrders) ? acceptedByRestaurantsOrders : [];
   const [refreshing, setRefreshing] = useState(false);
   const [expandedAccordionMap, setExpandedAccordionMap] = useState({});
@@ -502,6 +503,13 @@ export default function OrdersScreen() {
           />
         }
       >
+        {/* ── Top-Left Restaurant Selector Dropdown (If multi-restaurant) ── */}
+        {hasMultipleRestaurants && (
+          <View style={{ width: '100%', maxWidth: 400, alignItems: 'flex-start', marginBottom: 10 }}>
+            <RestaurantDropdown />
+          </View>
+        )}
+
         {/* Header Row */}
         <View style={styles.headerRow}>
           <TouchableOpacity

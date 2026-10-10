@@ -3,6 +3,61 @@ import { NativeModules, Platform, AppState } from 'react-native';
 const { SoundModule } = NativeModules;
 let webAudio = null;
 let loopIntervalTimer = null;
+let isAudioUnlocked = false;
+let pendingPlayRequest = false;
+
+// Web Audio API Synthesizer fallback in case wav file is buffering or blocked
+function playSynthesizedChime() {
+  if (typeof window === 'undefined') return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.25);
+    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.7);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.7);
+  } catch (_) {}
+}
+
+// Automatic Web Browser Autoplay Unlocker
+if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof document !== 'undefined') {
+  const unlockAudio = async () => {
+    isAudioUnlocked = true;
+    try {
+      if (!webAudio && window.Audio) {
+        webAudio = new window.Audio('/ordernotification.wav');
+        webAudio.preload = 'auto';
+      }
+      if (webAudio && webAudio.paused && !loopIntervalTimer && !pendingPlayRequest) {
+        webAudio.muted = true;
+        const p = webAudio.play();
+        if (p !== undefined) {
+          await p;
+          webAudio.pause();
+          webAudio.currentTime = 0;
+          webAudio.muted = false;
+        }
+      }
+    } catch (_) {}
+
+    if (pendingPlayRequest || loopIntervalTimer) {
+      pendingPlayRequest = false;
+      playSingleSoundIteration();
+    }
+  };
+
+  document.addEventListener('click', unlockAudio, { passive: true });
+  document.addEventListener('touchstart', unlockAudio, { passive: true });
+  document.addEventListener('keydown', unlockAudio, { passive: true });
+}
 
 // Listen for AppState changes so sound stops instantly if app is closed or sent to background
 AppState.addEventListener('change', (nextAppState) => {
@@ -17,14 +72,23 @@ async function playSingleSoundIteration() {
       if (typeof window !== 'undefined' && window.Audio) {
         if (!webAudio) {
           webAudio = new window.Audio('/ordernotification.wav');
+          webAudio.preload = 'auto';
         }
-        webAudio.loop = false;
-        webAudio.currentTime = 0;
-        await webAudio.play();
-        console.log('[Web Sound] Played ordernotification.wav (5s loop cycle).');
+        webAudio.volume = 1.0;
+        webAudio.loop = true;
+        if (webAudio.paused) {
+          webAudio.currentTime = 0;
+          const p = webAudio.play();
+          if (p !== undefined) {
+            await p;
+          }
+          console.log('[Web Sound] Continuously playing ordernotification.wav');
+        }
       }
     } catch (e) {
-      console.warn('[Web Sound] Browser playback notice:', e);
+      console.warn('[Web Sound] Autoplay blocked, queuing until user click:', e?.message || e);
+      pendingPlayRequest = true;
+      playSynthesizedChime();
     }
     return;
   }
@@ -65,8 +129,10 @@ export async function stopOrderSoundNative() {
   }
 
   if (Platform.OS === 'web') {
+    pendingPlayRequest = false;
     if (webAudio) {
       try {
+        webAudio.loop = false;
         webAudio.pause();
         webAudio.currentTime = 0;
       } catch (e) {}

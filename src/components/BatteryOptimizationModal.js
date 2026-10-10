@@ -1,16 +1,26 @@
 import { Ionicons } from '@expo/vector-icons';
-import notifee from '@notifee/react-native';
 import { useEffect, useState } from 'react';
 import {
   AppState,
   Linking,
   Modal,
+  NativeModules,
   Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+
+const getNotifee = () => {
+  if (Platform.OS !== 'android') return null;
+  if (!NativeModules?.NotifeeApiModule && !NativeModules?.NotifeeNativeModule) return null;
+  try {
+    return require('@notifee/react-native').default;
+  } catch (e) {
+    return null;
+  }
+};
 
 export default function BatteryOptimizationModal({ visible: forceVisible, onClose }) {
   const [modalVisible, setModalVisible] = useState(false);
@@ -31,7 +41,8 @@ export default function BatteryOptimizationModal({ visible: forceVisible, onClos
   }, [forceVisible]);
 
   const checkBatteryOptimization = async () => {
-    if (Platform.OS !== 'android') {
+    const notifee = getNotifee();
+    if (!notifee) {
       setModalVisible(false);
       return;
     }
@@ -50,21 +61,26 @@ export default function BatteryOptimizationModal({ visible: forceVisible, onClos
   };
 
   const handleOpenBatterySettings = async () => {
-    try {
-      // 1. Primary: Native Android battery optimization settings
-      await notifee.openBatteryOptimizationSettings();
-    } catch (err1) {
+    const notifee = getNotifee();
+    if (notifee) {
       try {
-        // 2. Secondary: Power manager settings for Xiaomi, Samsung, Oppo, Vivo, Realme, etc.
-        await notifee.openPowerManagerSettings();
-      } catch (err2) {
+        // 1. Primary: Native Android battery optimization settings
+        await notifee.openBatteryOptimizationSettings();
+        return;
+      } catch (err1) {
         try {
-          // 3. Fallback: Open general app settings
-          await Linking.openSettings();
-        } catch (err3) {
-          console.error('Failed to open settings:', err3);
-        }
+          // 2. Secondary: Power manager settings for Xiaomi, Samsung, Oppo, Vivo, Realme, etc.
+          await notifee.openPowerManagerSettings();
+          return;
+        } catch (err2) {}
       }
+    }
+
+    try {
+      // 3. Fallback: Open general app settings
+      await Linking.openSettings();
+    } catch (err3) {
+      console.error('Failed to open settings:', err3);
     }
   };
 
