@@ -344,31 +344,45 @@ export async function initFCMToken(userParam) {
       restId = String(userParam);
     }
 
-    if (!restId && !phone && !email && !userId) {
-      try {
-        const storedUserStr = await AsyncStorage.getItem('userData');
-        const storedRestId = await AsyncStorage.getItem('restId');
-        if (storedRestId) restId = storedRestId;
-        if (storedUserStr) {
-          const u = JSON.parse(storedUserStr);
-          restId = restId || u.restId || u.restaurantId || u.restaurant_id || u._id || '';
-          userId = userId || u._id || u.id || '';
-          phone = phone || u.phone || u.mobileNumber || '';
-          email = email || u.email || '';
-        }
-      } catch (e) {}
-    }
+      let subrestaurentsId = userParam?.subrestaurentsId || userParam?.subrestaurantsId || userParam?.subrestaurents_id || userParam?.subrestaurants_id || null;
 
-    console.log(`[FCM] Registering token to backend for restId="${restId}", phone="${phone}", email="${email}"...`);
+      if (!restId && !phone && !email && !userId) {
+        try {
+          const storedUserStr = await AsyncStorage.getItem('userData');
+          const storedRestId = await AsyncStorage.getItem('restId');
+          if (storedRestId) restId = storedRestId;
+          if (storedUserStr) {
+            const u = JSON.parse(storedUserStr);
+            restId = restId || u.restId || u.restaurantId || u.restaurant_id || u._id || '';
+            userId = userId || u._id || u.id || '';
+            phone = phone || u.phone || u.mobileNumber || '';
+            email = email || u.email || '';
+            if (!subrestaurentsId) {
+              subrestaurentsId = u?.subrestaurentsId || u?.subrestaurantsId || u?.subrestaurents_id || u?.subrestaurants_id || null;
+            }
+          }
+        } catch (e) {}
+      } else if (!subrestaurentsId) {
+        try {
+          const storedUserStr = await AsyncStorage.getItem('userData');
+          if (storedUserStr) {
+            const u = JSON.parse(storedUserStr);
+            subrestaurentsId = u?.subrestaurentsId || u?.subrestaurantsId || u?.subrestaurents_id || u?.subrestaurants_id || null;
+          }
+        } catch (e) {}
+      }
 
-    const res = await registerFCMToken({
-      restaurantId: restId,
-      restId: restId,
-      userId,
-      phone,
-      email,
-      fcmToken: token,
-    });
+      console.log(`[FCM] Registering token to backend for restId="${restId}", phone="${phone}", email="${email}"...`);
+
+      const res = await registerFCMToken({
+        restaurantId: restId,
+        restId: restId,
+        userId,
+        phone,
+        email,
+        subrestaurentsId,
+        fcmToken: token,
+      });
     const resData = await res.json();
     console.log(`[FCM] Server response for token registration:`, resData);
 
@@ -385,6 +399,7 @@ export async function initFCMToken(userParam) {
             userId,
             phone,
             email,
+            subrestaurentsId,
             fcmToken: newToken,
           });
           const refData = await refRes.json();
@@ -415,6 +430,7 @@ export async function clearFCMTokenOnLogout(userParam) {
     const restId = userObj?.restId || userObj?.restaurantId || userObj?.restaurant_id || '';
     const phone = userObj?.phone || userObj?.mobileNumber || '';
     const email = userObj?.email || '';
+    const subrestaurentsId = userObj?.subrestaurentsId || userObj?.subrestaurantsId || userObj?.subrestaurents_id || userObj?.subrestaurants_id || null;
 
     if (userId || restId || phone || email) {
       const res = await registerFCMToken({
@@ -423,6 +439,7 @@ export async function clearFCMTokenOnLogout(userParam) {
         userId,
         phone,
         email,
+        subrestaurentsId,
         fcmToken: '',
       });
       console.log('[FCM] Cleared fcmToken in MongoDB backend on logout.');
