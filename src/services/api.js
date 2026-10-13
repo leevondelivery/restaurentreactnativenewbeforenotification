@@ -150,21 +150,32 @@ export const fetchRestaurantStatus = async (restaurantId, phone, userId, signal)
       const uId = String(u._id || u.id || '').trim().toLowerCase();
       const uPhone = String(u.phone || u.mobileNumber || '').trim().toLowerCase();
 
-      if (targetRestId && (uRestId === targetRestId || uId === targetRestId)) return true;
-      if (targetUserId && (uId === targetUserId || uRestId === targetUserId)) return true;
-      if (targetPhone && uPhone === targetPhone) return true;
+      // If specific restaurantId was requested, match strictly against that restaurant
+      if (targetRestId) {
+        return uRestId === targetRestId || uId === targetRestId;
+      }
+      // Fallback only if no restaurantId was specified
+      if (targetUserId) {
+        return uId === targetUserId || uRestId === targetUserId;
+      }
+      if (targetPhone) {
+        return uPhone === targetPhone;
+      }
       return false;
     });
 
     if (match) {
+      const activeState = typeof match.isActive === 'boolean'
+        ? match.isActive
+        : (match.status === 'active' || match.isOpen === true);
       return {
         ok: true,
         json: async () => ({
           success: true,
-          isActive: match.isActive,
+          isActive: activeState,
           user: match,
         }),
-        isActive: match.isActive,
+        isActive: activeState,
         user: match,
       };
     }

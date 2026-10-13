@@ -18,6 +18,7 @@ export default function RestaurantDropdown() {
     assignedRestaurants,
     currentRestId,
     currentRestaurantName,
+    restaurantInfo,
     switchRestaurant,
     pendingCountsByRestId,
     hasPendingOtherRestaurantOrders,
@@ -41,30 +42,49 @@ export default function RestaurantDropdown() {
     }
   };
 
-  // If user only has 1 restaurant, do not show the dropdown selector
-  if (!hasMultipleRestaurants) {
-    return null;
-  }
+  const activeObj = (assignedRestaurants || []).find(
+    (r) => String(r.restId).trim().toLowerCase() === String(currentRestId).trim().toLowerCase()
+  );
+  const activeName =
+    currentRestaurantName ||
+    activeObj?.name ||
+    restaurantInfo?.name ||
+    (assignedRestaurants && assignedRestaurants.length > 0 ? assignedRestaurants[0]?.name : null) ||
+    (currentRestId ? `Branch #${currentRestId}` : 'Select Restaurant');
 
-  const activeName = currentRestaurantName || `Branch #${currentRestId}`;
+  // If user only has 1 restaurant, display the restaurant name in an elegant pill under the toggle
+  if (!hasMultipleRestaurants) {
+    return (
+      <View style={styles.wrapper}>
+        <View style={styles.triggerButtonStatic}>
+          <View style={styles.iconCircle}>
+            <Ionicons name="storefront" size={16} color="#1E1E1E" />
+          </View>
+          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+            {activeName}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   const handleSelect = (restId) => {
     setModalVisible(false);
-    if (String(restId).trim() !== String(currentRestId).trim()) {
+    if (String(restId).trim().toLowerCase() !== String(currentRestId).trim().toLowerCase()) {
       switchRestaurant(restId);
     }
   };
 
   return (
     <View style={styles.wrapper}>
-      {/* ── Top-Left Trigger Button Pill ── */}
+      {/* ── Trigger Button Pill (Positioned under the toggle) ── */}
       <TouchableOpacity
         style={styles.triggerButton}
         activeOpacity={0.8}
         onPress={() => setModalVisible(true)}
       >
         <View style={styles.iconCircle}>
-          <Ionicons name="storefront" size={14} color="#1E1E1E" />
+          <Ionicons name="storefront" size={16} color="#1E1E1E" />
         </View>
 
         <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
@@ -216,40 +236,64 @@ export default function RestaurantDropdown() {
 
 const styles = StyleSheet.create({
   wrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
     zIndex: 100,
+    marginBottom: 12,
   },
   triggerButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#E6DFD0',
-    borderRadius: 22,
-    paddingVertical: 7,
-    paddingLeft: 8,
-    paddingRight: 14,
+    borderRadius: 50,
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 16,
     borderWidth: 1.2,
     borderColor: '#D4CBB8',
     position: 'relative',
-    maxWidth: 240,
+    minWidth: 196,
+    maxWidth: 320,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  triggerButtonStatic: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E6DFD0',
+    borderRadius: 50,
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 16,
+    borderWidth: 1.2,
+    borderColor: '#D4CBB8',
+    minWidth: 196,
+    maxWidth: 320,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
   },
   iconCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#D7CEBE',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
   },
   triggerText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#1E1E1E',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
     flexShrink: 1,
     marginRight: 6,
   },

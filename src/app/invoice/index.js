@@ -132,6 +132,16 @@ export default function OrderInvoiceScreen() {
   let itemsRaw = [];
   if (Array.isArray(order?.items) && order.items.length > 0) {
     itemsRaw = order.items;
+  } else if (Array.isArray(order?.orderDetails) && order.orderDetails.length > 0) {
+    for (const od of order.orderDetails) {
+      if (od && Array.isArray(od.items) && od.items.length > 0) {
+        itemsRaw.push(...od.items);
+      } else if (od && (od.name || od.itemName)) {
+        itemsRaw.push(od);
+      }
+    }
+  } else if (order?.orderDetails?.items && Array.isArray(order.orderDetails.items)) {
+    itemsRaw = order.orderDetails.items;
   } else if (typeof order?.items === 'string') {
     try {
       const parsed = JSON.parse(order.items);
@@ -139,7 +149,7 @@ export default function OrderInvoiceScreen() {
     } catch (e) {}
   }
   if (itemsRaw.length === 0) {
-    itemsRaw = [{ name: 'Chicken Biryani', quantity: 1, price: 200.0 }];
+    itemsRaw = [{ name: 'Order Items', quantity: 1, price: 0.0 }];
   }
 
   const itemsList = itemsRaw.map((it) => {

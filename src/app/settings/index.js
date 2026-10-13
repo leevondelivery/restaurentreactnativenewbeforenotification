@@ -19,6 +19,7 @@ import {
   View
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
+import { useOrders } from '@/context/OrdersContext';
 
 import './settings.css';
 
@@ -27,6 +28,12 @@ export default function SettingsScreen() {
   const dispatch = useDispatch();
   // Read from Redux — instant, no async wait, no blank flash
   const userData = useSelector((state) => state.user.userData);
+  const {
+    currentRestId,
+    currentRestaurantName,
+    restaurantInfo,
+    hasMultipleRestaurants,
+  } = useOrders();
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [termsModalVisible, setTermsModalVisible] = useState(false);
@@ -79,23 +86,20 @@ export default function SettingsScreen() {
     loadUser();
   }, []);
 
-  // Every time settings screen comes into focus (returning from sub-pages,
-  // pressing back, etc.) ensure Redux has fresh user data.
-  // If Redux already has data, skip the async fetch to avoid blank flash.
+  // Every time settings screen comes into focus, keep data synced with storage
   useFocusEffect(
     useCallback(() => {
       isNavigatingRef.current = false;
-      // Always mark as loaded immediately so we never show a blank page
       setIsLoaded(true);
-
-      // Only hit AsyncStorage if Redux is empty (e.g. cold start)
-      if (userData) return;
 
       const loadUser = async () => {
         try {
           const storedUser = await AsyncStorage.getItem('userData');
           if (storedUser) {
-            dispatch(setUser(JSON.parse(storedUser)));
+            const parsed = JSON.parse(storedUser);
+            if (JSON.stringify(parsed) !== JSON.stringify(userData)) {
+              dispatch(setUser(parsed));
+            }
           }
         } catch (e) {
           console.warn('Settings: failed to load userData', e);
@@ -187,11 +191,11 @@ export default function SettingsScreen() {
     }
   };
 
-  const initialLetter = userData?.name
-    ? userData.name.trim().charAt(0).toUpperCase()
+  const displayName = currentRestaurantName || restaurantInfo?.name || userData?.name || 'Talimpu';
+  const initialLetter = displayName
+    ? displayName.trim().charAt(0).toUpperCase()
     : 'T';
-  const displayName = userData?.name || 'Talimpu';
-  const displayPhone = userData?.phone || userData?.email || 'Talimpu';
+  const displayPhone = userData?.phone || userData?.mobileNumber || userData?.email || '';
 
   const menuItems = [
     { id: '1', title: 'Restaurant Profile', icon: 'person' },
@@ -224,10 +228,18 @@ export default function SettingsScreen() {
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.userNameText}>{displayName}</Text>
-            <View style={styles.userPhoneRow}>
-              <Ionicons name="call-outline" size={15} color="#8A8168" />
-              <Text style={styles.userPhoneText}>{displayPhone}</Text>
-            </View>
+            {currentRestId ? (
+              <View style={styles.userPhoneRow}>
+                <Ionicons name="storefront-outline" size={14} color="#8A8168" />
+                <Text style={styles.userPhoneText}>Branch #{currentRestId}</Text>
+              </View>
+            ) : null}
+            {displayPhone ? (
+              <View style={[styles.userPhoneRow, { marginTop: 2 }]}>
+                <Ionicons name="call-outline" size={14} color="#8A8168" />
+                <Text style={styles.userPhoneText}>{displayPhone}</Text>
+              </View>
+            ) : null}
           </View>
         </View>
 

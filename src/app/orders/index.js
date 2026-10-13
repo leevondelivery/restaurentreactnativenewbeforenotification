@@ -17,7 +17,6 @@ import {
 } from 'react-native';
 
 import CustomLoader from '@/components/CustomLoader';
-import RestaurantDropdown from '@/components/RestaurantDropdown';
 import { useOrders } from '@/context/OrdersContext';
 
 import './orders.css';
@@ -503,13 +502,6 @@ export default function OrdersScreen() {
           />
         }
       >
-        {/* ── Top-Left Restaurant Selector Dropdown (If multi-restaurant) ── */}
-        {hasMultipleRestaurants && (
-          <View style={{ width: '100%', maxWidth: 400, alignItems: 'flex-start', marginBottom: 10 }}>
-            <RestaurantDropdown />
-          </View>
-        )}
-
         {/* Header Row */}
         <View style={styles.headerRow}>
           <TouchableOpacity

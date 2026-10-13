@@ -1,5 +1,6 @@
 import BatteryOptimizationModal from '@/components/BatteryOptimizationModal';
 import BottomNavbar from '@/components/navbar/BottomNavbar';
+import CustomLoader from '@/components/CustomLoader';
 import { OrdersProvider, useOrders } from '@/context/OrdersContext';
 import store from '@/store/store';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, usePathname, useRouter } from 'expo-router';
@@ -99,7 +100,7 @@ function AppLayout() {
   const colorScheme = useColorScheme();
   const pathname = usePathname();
   const router = useRouter();
-  const { addIncomingOrderOptimistic, fetchGlobalOrders } = useOrders();
+  const { addIncomingOrderOptimistic, fetchGlobalOrders, isSwitchingRestaurant } = useOrders();
 
   useEffect(() => {
     SplashScreen.hideAsync();
@@ -245,6 +246,12 @@ function AppLayout() {
           <Stack.Screen name="mymenu" />
           <Stack.Screen name="notifications" />
         </Stack>
+        <CustomLoader
+          visible={isSwitchingRestaurant}
+          title="Switching Restaurant..."
+          subtitle="Updating live branch data"
+          overlay={true}
+        />
         {isNavbarVisible && <BottomNavbar />}
         {isNavbarVisible && <BatteryOptimizationModal />}
       </View>

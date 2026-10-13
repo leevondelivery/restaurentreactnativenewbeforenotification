@@ -17,6 +17,8 @@ import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 import { fetchReviews as apiFetchReviews } from '@/services/api';
 
+import { useOrders } from '@/context/OrdersContext';
+
 import CustomLoader from '@/components/CustomLoader';
 import { getDisplayOrderId } from '../orders';
 
@@ -24,6 +26,7 @@ import './myreviews.css';
 
 export default function MyReviewsScreen() {
   const router = useRouter();
+  const { currentRestId } = useOrders();
   const [reviews, setReviews] = useState([]);
   const safeReviews = Array.isArray(reviews) ? reviews : [];
   const [loading, setLoading] = useState(true);
@@ -47,14 +50,16 @@ export default function MyReviewsScreen() {
 
   useEffect(() => {
     fetchReviews();
-  }, []);
+  }, [currentRestId]);
 
   const fetchReviews = async () => {
     try {
       setLoading(true);
+      const storedSelected = await AsyncStorage.getItem('selectedRestId');
+      const storedRestId = await AsyncStorage.getItem('restId');
       const storedUserStr = await AsyncStorage.getItem('userData');
-      let targetRestId = '';
-      if (storedUserStr) {
+      let targetRestId = currentRestId || storedSelected || storedRestId || '';
+      if (!targetRestId && storedUserStr) {
         const storedUser = JSON.parse(storedUserStr);
         targetRestId =
           storedUser?.restId ||
@@ -74,13 +79,13 @@ export default function MyReviewsScreen() {
 
       if (response.ok && data.success && Array.isArray(data.reviews)) {
         const matchingReviews = data.reviews.filter((rev) => {
-          if (!targetRestId) return false;
+          if (!targetRestId) return true;
           const revRestId = String(
             rev.restaurant_id || rev.restaurantId || rev.restId || rev.storeId || rev.vendorId || rev.restaurant || ''
           ).trim();
-          return revRestId === String(targetRestId).trim();
+          return revRestId.toLowerCase() === String(targetRestId).trim().toLowerCase();
         });
-        setReviews(matchingReviews);
+        setReviews(matchingReviews.length > 0 ? matchingReviews : data.reviews);
       } else {
         setReviews([]);
       }
@@ -116,22 +121,106 @@ export default function MyReviewsScreen() {
   };
 
   const getItemsList = (rev) => {
-    if (Array.isArray(rev.items) && rev.items.length > 0) {
-      return rev.items.map((it) => {
-        const p = typeof it === 'object' ? it.price ?? 200 : 200;
-        const isFree = typeof it === 'object' && (it.isFreeItem === true || it.isFreeItem === 'true' || String(it.isFreeItem).toLowerCase() === 'true' || Number(p) === 0);
+    if (!rev) return [];
+
+    let rawList = [];
+
+    const safeParse = (val) => {
+      if (!val) return null;
+      if (typeof val === 'string') {
+        try {
+          return JSON.parse(val);
+        } catch (e) {
+          return val;
+        }
+      }
+      return val;
+    };
+
+    const orderDetailsParsed = safeParse(rev.orderDetails);
+    const orderParsed = safeParse(rev.order);
+
+    // 1. Primary check: orderDetails (array of orders with .items, or array of items directly)
+    if (Array.isArray(orderDetailsParsed) && orderDetailsParsed.length > 0) {
+      for (const entry of orderDetailsParsed) {
+        if (entry && Array.isArray(entry.items) && entry.items.length > 0) {
+          rawList.push(...entry.items);
+        } else if (entry && (entry.name || entry.itemName || entry.itemId)) {
+          rawList.push(entry);
+        }
+      }
+    } else if (orderDetailsParsed && typeof orderDetailsParsed === 'object') {
+      if (Array.isArray(orderDetailsParsed.items) && orderDetailsParsed.items.length > 0) {
+        rawList.push(...orderDetailsParsed.items);
+      }
+    }
+
+    // 2. Check rev.items if non-empty
+    if (rawList.length === 0) {
+      const itemsParsed = safeParse(rev.items);
+      if (Array.isArray(itemsParsed) && itemsParsed.length > 0) {
+        rawList.push(...itemsParsed);
+      } else if (typeof itemsParsed === 'string' && itemsParsed.trim()) {
+        rawList.push({ name: itemsParsed.trim(), quantity: 1, price: 0 });
+      }
+    }
+
+    // 3. Check rev.order
+    if (rawList.length === 0 && orderParsed && typeof orderParsed === 'object') {
+      if (Array.isArray(orderParsed.items) && orderParsed.items.length > 0) {
+        rawList.push(...orderParsed.items);
+      } else if (Array.isArray(orderParsed.orderDetails) && orderParsed.orderDetails.length > 0) {
+        for (const entry of orderParsed.orderDetails) {
+          if (entry && Array.isArray(entry.items)) {
+            rawList.push(...entry.items);
+          }
+        }
+      }
+    }
+
+    // 4. Check rev.cartItems, rev.orderedItems, rev.itemsList
+    if (rawList.length === 0) {
+      const altList = safeParse(rev.cartItems || rev.orderedItems || rev.itemsList);
+      if (Array.isArray(altList) && altList.length > 0) {
+        rawList.push(...altList);
+      }
+    }
+
+    // 5. Fallback if single dish/item fields exist on rev
+    if (rawList.length === 0 && (rev.itemName || rev.foodItem || rev.dishName)) {
+      rawList.push({
+        name: rev.itemName || rev.foodItem || rev.dishName,
+        quantity: rev.quantity || 1,
+        price: rev.price || 0,
+      });
+    }
+
+    if (rawList.length > 0) {
+      return rawList.map((it) => {
+        if (typeof it === 'string') {
+          return { name: it, quantity: 1, price: 0, isFreeItem: false };
+        }
+        const name = it.name || it.itemName || it.foodName || it.title || 'Item';
+        const qty = Number(it.quantity || it.qty || 1);
+        const price = Number(it.price ?? it.cost ?? 0);
+        const isFree =
+          it.isFreeItem === true ||
+          it.isFreeItem === 'true' ||
+          String(it.isFreeItem).toLowerCase() === 'true' ||
+          (it.isBogo && price === 0) ||
+          price === 0;
+
         return {
-          name: typeof it === 'string' ? it : it.name || 'Item',
-          quantity: typeof it === 'object' ? it.quantity || 1 : 1,
-          price: p,
+          name,
+          quantity: isNaN(qty) || qty <= 0 ? 1 : qty,
+          price: isNaN(price) ? 0 : price,
           isFreeItem: isFree,
         };
       });
     }
-    if (typeof rev.items === 'string' && rev.items.trim()) {
-      return [{ name: rev.items, quantity: 1, price: 200 }];
-    }
-    return [{ name: 'Chicken Biryani', quantity: 1, price: 200 }];
+
+    // Fallback if no item details recorded for the order
+    return [{ name: 'Order Items', quantity: 1, price: 0, isFreeItem: false }];
   };
 
   const renderStars = (rating) => {

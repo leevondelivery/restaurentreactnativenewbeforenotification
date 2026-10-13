@@ -14,6 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { BASE_URL } from '@/constants/api';
+import { extractIsActive, extractIsActiveStrict } from '@/utils/statusUtils';
 import { useDispatch } from 'react-redux';
 import { setUser } from '@/store/userSlice';
 
@@ -29,6 +30,8 @@ export const OrdersProvider = ({ children }) => {
   const [incomingOrders, setIncomingOrders] = useState([]); // Pending incoming orders
   const [incomingCount, setIncomingCount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [isSwitchingRestaurant, setIsSwitchingRestaurant] = useState(false);
+  const isSwitchingRestaurantRef = useRef(false);
   const seenIncomingIdsRef = useRef(new Set());
   const dispatch = useDispatch();
   const isInitialFetchRef = useRef(true);
@@ -94,34 +97,7 @@ export const OrdersProvider = ({ children }) => {
       const targetPhone = String(parsedUser?.phone || parsedUser?.mobileNumber || '').trim();
       const targetEmail = String(parsedUser?.email || '').trim().toLowerCase();
 
-      // 3. Find logged-in user directly in MongoDB /api/users to get latest live subrestaurentsId
-      const loggedInUserFromDb = (Array.isArray(allUsers) ? allUsers : []).find((u) => {
-        const uRestId = String(u.restId || u.restaurantId || '').trim();
-        const uId = String(u._id || u.id || '').trim();
-        const uPhone = String(u.phone || u.mobileNumber || '').trim();
-        const uEmail = String(u.email || '').trim().toLowerCase();
-
-        return (
-          (targetRestId && uRestId === targetRestId) ||
-          (targetUserId && uId === targetUserId) ||
-          (targetPhone && uPhone === targetPhone) ||
-          (targetEmail && uEmail === targetEmail)
-        );
-      });
-
-      // 4. Extract subrestaurentsId across all spelling/casing variations
-      const rawSub =
-        loggedInUserFromDb?.subrestaurentsId ??
-        loggedInUserFromDb?.subrestaurantsId ??
-        loggedInUserFromDb?.subrestaurents_id ??
-        loggedInUserFromDb?.subrestaurants_id ??
-        parsedUser?.subrestaurentsId ??
-        parsedUser?.subrestaurantsId ??
-        parsedUser?.subrestaurents_id ??
-        parsedUser?.subrestaurants_id ??
-        parsedUser?.user?.subrestaurentsId ??
-        parsedUser?.user?.subrestaurantsId;
-
+      // 3. Find logged-in user and preserve master subrestaurants list
       const parseSubIds = (raw) => {
         if (!raw) return [];
         if (Array.isArray(raw)) {
@@ -133,17 +109,67 @@ export const OrdersProvider = ({ children }) => {
         return [];
       };
 
-      const subIds = parseSubIds(rawSub);
+      // Check cached master sub-restaurant list from storage
+      let cachedSub = null;
+      try {
+        const c = await AsyncStorage.getItem('masterSubrestaurentsId');
+        if (c) cachedSub = JSON.parse(c);
+      } catch (e) {}
 
-      // Keep local userData synced with live subrestaurentsId from backend
-      if (subIds.length > 0 && parsedUser) {
-        parsedUser = {
-          ...parsedUser,
-          subrestaurentsId: subIds,
-          subrestaurantsId: subIds,
-        };
-        AsyncStorage.setItem('userData', JSON.stringify(parsedUser)).catch(() => {});
-        dispatch(setUser(parsedUser));
+      let subIds = parseSubIds(
+        parsedUser?.subrestaurentsId ??
+        parsedUser?.subrestaurantsId ??
+        parsedUser?.subrestaurents_id ??
+        parsedUser?.subrestaurants_id ??
+        cachedSub
+      );
+
+      // Search all users in DB for the master account that owns subrestaurants
+      if (subIds.length === 0) {
+        const parentUser = (Array.isArray(allUsers) ? allUsers : []).find((u) => {
+          const uSubs = parseSubIds(u.subrestaurentsId || u.subrestaurantsId);
+          if (uSubs.length === 0) return false;
+          const uRestId = String(u.restId || u.restaurantId || '').trim();
+          const uId = String(u._id || u.id || '').trim();
+          const uPhone = String(u.phone || u.mobileNumber || '').trim();
+          const uEmail = String(u.email || '').trim().toLowerCase();
+
+          return (
+            (targetUserId && uId === targetUserId) ||
+            (targetPhone && uPhone === targetPhone) ||
+            (targetEmail && uEmail === targetEmail) ||
+            (targetRestId && (uSubs.includes(targetRestId) || uRestId === targetRestId))
+          );
+        });
+
+        if (parentUser) {
+          subIds = parseSubIds(parentUser.subrestaurentsId || parentUser.subrestaurantsId);
+        }
+      }
+
+      // Check if ANY user in database has subrestaurants containing targetRestId
+      if (subIds.length === 0 && targetRestId) {
+        const parentWithBranch = (Array.isArray(allUsers) ? allUsers : []).find((u) => {
+          const uSubs = parseSubIds(u.subrestaurentsId || u.subrestaurantsId);
+          return uSubs.includes(targetRestId);
+        });
+        if (parentWithBranch) {
+          subIds = parseSubIds(parentWithBranch.subrestaurentsId || parentWithBranch.subrestaurantsId);
+        }
+      }
+
+      // Save valid subIds into persistent cache so they never get lost
+      if (subIds.length > 0) {
+        AsyncStorage.setItem('masterSubrestaurentsId', JSON.stringify(subIds)).catch(() => {});
+        if (parsedUser) {
+          parsedUser = {
+            ...parsedUser,
+            subrestaurentsId: subIds,
+            subrestaurantsId: subIds,
+          };
+          AsyncStorage.setItem('userData', JSON.stringify(parsedUser)).catch(() => {});
+          dispatch(setUser(parsedUser));
+        }
       }
 
       // Collect target restaurant branch IDs (e.g., ["31", "10", "11"])
@@ -158,9 +184,13 @@ export const OrdersProvider = ({ children }) => {
         allIds.push(targetRestId);
       }
 
-      let activeRestId = storedSelected || storedRestId || (allIds.length > 0 ? allIds[0] : targetRestId);
+      let activeRestId = currentRestIdRef.current || storedSelected || storedRestId || (allIds.length > 0 ? allIds[0] : targetRestId);
       if (allIds.length > 0 && !allIds.includes(activeRestId)) {
         activeRestId = allIds[0];
+      }
+      if (activeRestId && !currentRestIdRef.current) {
+        AsyncStorage.setItem('selectedRestId', activeRestId).catch(() => {});
+        AsyncStorage.setItem('restId', activeRestId).catch(() => {});
       }
 
       let cachedMap = {};
@@ -178,23 +208,28 @@ export const OrdersProvider = ({ children }) => {
         const name =
           found?.name ||
           cachedMap[id]?.name ||
-          (id === targetRestId ? (loggedInUserFromDb?.name || parsedUser?.name) : '') ||
+          (id === targetRestId ? parsedUser?.name : '') ||
           `Restaurant #${id}`;
         const comm = Number(found?.commission || found?.commissionRate || cachedMap[id]?.commission || 5);
+        // CRITICAL: Extract respective restaurant operational status strictly from DB
+        const isActiveBool = found ? (extractIsActiveStrict(found) ?? false) : false;
         return {
           restId: id,
           name,
           commission: comm,
-          isActive: found ? (found.isActive ?? true) : true,
+          isActive: isActiveBool,
           address: found?.address || found?.location || '',
+          phone: found?.phone || '',
           rawUser: found || null,
         };
       });
 
       setAssignedRestaurants(mappedList);
       assignedRestaurantsRef.current = mappedList;
-      setCurrentRestId(activeRestId);
-      currentRestIdRef.current = activeRestId;
+      if (!currentRestIdRef.current || currentRestIdRef.current !== activeRestId) {
+        setCurrentRestId(activeRestId);
+        currentRestIdRef.current = activeRestId;
+      }
 
       // Save mapped restaurant names to cache
       if (mappedList.length > 0) {
@@ -205,7 +240,7 @@ export const OrdersProvider = ({ children }) => {
         AsyncStorage.setItem('cached_all_restaurants_map', JSON.stringify(mapToCache)).catch(() => {});
       }
 
-      const activeProfile = mappedList.find((r) => r.restId === activeRestId);
+      const activeProfile = mappedList.find((r) => String(r.restId).trim().toLowerCase() === String(activeRestId).trim().toLowerCase());
 
       const restId = activeRestId;
       const name = activeProfile?.name || parsedUser?.name || parsedUser?.restaurantName || `Restaurant #${activeRestId}`;
@@ -263,14 +298,26 @@ export const OrdersProvider = ({ children }) => {
         commission = 5;
       }
 
+      const branchIsActive = activeProfile?.isActive ?? false;
+
       await AsyncStorage.setItem('commission', String(commission));
       if (parsedUser) {
         parsedUser = {
           ...parsedUser,
+          restId: activeRestId,
+          restaurantId: activeRestId,
+          name: activeProfile?.name || parsedUser?.name,
           commission,
           commissionRate: commission,
+          isActive: branchIsActive,
+          is_active: branchIsActive,
+          isOpen: branchIsActive,
+          is_open: branchIsActive,
+          status: branchIsActive ? 'active' : 'closed',
         };
         await AsyncStorage.setItem('userData', JSON.stringify(parsedUser));
+        await AsyncStorage.setItem(`activeRestStatus_${activeRestId}`, String(branchIsActive));
+        dispatch(setUser(parsedUser));
       }
 
       const address =
@@ -314,6 +361,7 @@ export const OrdersProvider = ({ children }) => {
         fssai,
         lat,
         lng,
+        isActive: branchIsActive,
       };
 
       setRestaurantInfo(info);
@@ -363,14 +411,17 @@ export const OrdersProvider = ({ children }) => {
 
   // Fetch both accepted orders and incoming orders from API
   const fetchGlobalOrders = useCallback(async (isPolling = false, overrideRestId = null) => {
+    // If a restaurant switch is in flight and this is an uncoordinated background poll/FCM, skip
+    if (isSwitchingRestaurantRef.current && !overrideRestId) {
+      if (!isPolling) setLoading(false);
+      return;
+    }
+
     if (!isPolling) {
       setLoading(true);
     }
 
     try {
-      // Ensure restaurant identity & commission context state refreshes for current logged-in user
-      await loadRestaurantInfo();
-
       const storedUserStr = await AsyncStorage.getItem('userData');
       const storedSelected = await AsyncStorage.getItem('selectedRestId');
       const storedRestId = await AsyncStorage.getItem('restId');
@@ -645,63 +696,64 @@ export const OrdersProvider = ({ children }) => {
     }
   }, []);
 
+  // Helper to dynamically update in-memory active status for any restaurant
+  const updateRestaurantActiveStatus = useCallback((restId, isActiveBool) => {
+    const sid = String(restId || '').trim().toLowerCase();
+    if (!sid) return;
+    const boolVal = Boolean(isActiveBool);
+    const updated = assignedRestaurantsRef.current.map((r) =>
+      String(r.restId).trim().toLowerCase() === sid
+        ? { ...r, isActive: boolVal }
+        : r
+    );
+    setAssignedRestaurants(updated);
+    assignedRestaurantsRef.current = updated;
+  }, []);
+
   // Switch active restaurant with isolated storage & instantaneous UI update
   const switchRestaurant = useCallback(async (targetRestId) => {
     const newId = String(targetRestId || '').trim();
     if (!newId || newId.toLowerCase() === String(currentRestIdRef.current).trim().toLowerCase()) return;
+    if (isSwitchingRestaurantRef.current) return;
+
+    isSwitchingRestaurantRef.current = true;
+    setIsSwitchingRestaurant(true);
+    currentRestIdRef.current = newId;
+    setCurrentRestId(newId);
 
     try {
       console.log(`[OrdersContext] Switching active restaurant to restId="${newId}"...`);
 
-      // 1. Update AsyncStorage
-      await AsyncStorage.setItem('restId', newId);
-      await AsyncStorage.setItem('selectedRestId', newId);
+      // 1. Immediately persist to AsyncStorage
+      await Promise.all([
+        AsyncStorage.setItem('restId', newId).catch(() => {}),
+        AsyncStorage.setItem('selectedRestId', newId).catch(() => {}),
+      ]);
 
-      // 2. Find target profile from assigned list
+      // Find in-memory target profile immediately for instantaneous 0ms display
       const targetProfile = assignedRestaurantsRef.current.find(
         (r) => String(r.restId).trim().toLowerCase() === newId.toLowerCase()
       );
-      const targetName = targetProfile?.name || `Restaurant #${newId}`;
-      const targetCommission = targetProfile?.commission || 5;
+      let targetName = targetProfile?.name || `Restaurant #${newId}`;
+      let targetCommission = targetProfile?.commission ?? 5;
+      let finalActive = targetProfile?.isActive ?? false;
 
-      // 3. Update master userData in AsyncStorage and Redux without losing subrestaurantsId
-      const storedUserStr = await AsyncStorage.getItem('userData');
-      if (storedUserStr) {
-        try {
-          const u = JSON.parse(storedUserStr);
-          const updatedUser = {
-            ...u,
-            restId: newId,
-            restaurantId: newId,
-            name: targetName,
-            subrestaurentsId: u.subrestaurentsId || u.subrestaurantsId,
-            subrestaurantsId: u.subrestaurentsId || u.subrestaurantsId,
-          };
-          if (targetProfile?.rawUser) {
-            if (typeof targetProfile.rawUser.isActive === 'boolean') {
-              updatedUser.isActive = targetProfile.rawUser.isActive;
-              updatedUser.is_active = targetProfile.rawUser.isActive;
-              updatedUser.isOpen = targetProfile.rawUser.isActive;
-              updatedUser.is_open = targetProfile.rawUser.isActive;
-              updatedUser.status = targetProfile.rawUser.isActive ? 'active' : 'closed';
-            }
-          }
-          await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
-          dispatch(setUser(updatedUser));
-        } catch (e) { }
-      }
-
-      // 4. Update state & refs
-      currentRestIdRef.current = newId;
-      setCurrentRestId(newId);
-      setRestaurantInfo((prev) => ({
-        ...prev,
+      // Immediately set restaurantInfo so header, dropdown, and toggle reflect new branch without lag
+      setRestaurantInfo({
         restId: newId,
         name: targetName,
+        phone: targetProfile?.phone || '',
+        email: '',
+        gstin: '37AANFL1602Q1ZW',
         commission: targetCommission,
-      }));
+        address: targetProfile?.address || '',
+        fssai: '',
+        openTime: targetProfile?.openTime || '00:00',
+        closeTime: targetProfile?.closeTime || '00:01',
+        isActive: finalActive,
+      });
 
-      // 5. Load isolated cached orders for new restaurant immediately (never combined)
+      // 2. Load isolated cached orders for new restaurant immediately
       try {
         const [cAcc, cTrk, cInc] = await Promise.all([
           AsyncStorage.getItem(`cached_accepted_orders_${newId}`),
@@ -720,10 +772,111 @@ export const OrdersProvider = ({ children }) => {
         setIncomingCount(0);
       }
 
-      // 6. Fetch fresh API data for new restaurant
-      await fetchGlobalOrders(false, newId);
+      // 3. Fetch fresh restaurant status and full details from backend /api/users
+      let matchedFound = null;
+      let allUsers = [];
+      try {
+        allUsers = await fetchAllRestaurants();
+        matchedFound = (Array.isArray(allUsers) ? allUsers : []).find(
+          (u) =>
+            String(u.restId || u.restaurantId || '').trim().toLowerCase() === newId.toLowerCase() ||
+            String(u._id || '').trim().toLowerCase() === newId.toLowerCase()
+        );
+        if (matchedFound) {
+          targetName = matchedFound?.name || targetName;
+          targetCommission = matchedFound?.commission ?? targetCommission;
+          finalActive = extractIsActive(matchedFound);
+        }
+      } catch (e) { }
+
+      // 4. Update assigned list in memory with fresh status
+      const updatedList = assignedRestaurantsRef.current.map((r) =>
+        String(r.restId).trim().toLowerCase() === newId.toLowerCase()
+          ? {
+              ...r,
+              name: targetName,
+              commission: targetCommission,
+              isActive: finalActive,
+              address: matchedFound?.address || matchedFound?.restLocation || r.address || '',
+              phone: matchedFound?.phone || r.phone || '',
+              openTime: matchedFound?.openTime || r.openTime || '00:00',
+              closeTime: matchedFound?.closeTime || r.closeTime || '00:01',
+              fssai: matchedFound?.fssai || r.fssai || '',
+              rawUser: matchedFound || r.rawUser,
+            }
+          : r
+      );
+      setAssignedRestaurants(updatedList);
+      assignedRestaurantsRef.current = updatedList;
+
+      // 5. Update master userData in AsyncStorage and Redux PRESERVING subrestaurentsId & master login identity
+      const storedUserStr = await AsyncStorage.getItem('userData');
+      if (storedUserStr) {
+        try {
+          const u = JSON.parse(storedUserStr);
+          const cachedSubStr = await AsyncStorage.getItem('masterSubrestaurentsId');
+          const masterSubs =
+            u.subrestaurentsId ||
+            u.subrestaurantsId ||
+            (cachedSubStr ? JSON.parse(cachedSubStr) : null) ||
+            assignedRestaurantsRef.current.map((x) => x.restId);
+
+          const updatedUser = {
+            ...u,
+            restId: newId,
+            restaurantId: newId,
+            name: targetName,
+            address: matchedFound?.address || matchedFound?.restLocation || u.address,
+            fssai: matchedFound?.fssai || u.fssai,
+            openTime: matchedFound?.openTime || u.openTime || '00:00',
+            closeTime: matchedFound?.closeTime || u.closeTime || '00:01',
+            phone: matchedFound?.phone || u.phone,
+            email: matchedFound?.email || u.email,
+            commission: targetCommission,
+            isActive: finalActive,
+            is_active: finalActive,
+            isOpen: finalActive,
+            is_open: finalActive,
+            status: finalActive ? 'active' : 'closed',
+            subrestaurentsId: masterSubs,
+            subrestaurantsId: masterSubs,
+          };
+          await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
+          await AsyncStorage.setItem(`activeRestStatus_${newId}`, String(finalActive));
+          dispatch(setUser(updatedUser));
+        } catch (e) { }
+      }
+
+      setRestaurantInfo({
+        restId: newId,
+        name: targetName,
+        phone: matchedFound?.phone || targetProfile?.phone || '',
+        email: matchedFound?.email || '',
+        gstin: '37AANFL1602Q1ZW',
+        commission: targetCommission,
+        address: matchedFound?.address || matchedFound?.restLocation || targetProfile?.address || '',
+        fssai: matchedFound?.fssai || '',
+        openTime: matchedFound?.openTime || '00:00',
+        closeTime: matchedFound?.closeTime || '00:01',
+        isActive: finalActive,
+      });
+
+      // 6. Retrieve fresh live orders for new branch from backend
+      try {
+        await Promise.race([
+          fetchGlobalOrders(true, newId),
+          new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]);
+      } catch (err) {
+        console.warn('[OrdersContext] Background orders refresh on switch notice:', err);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
     } catch (err) {
       console.error('[OrdersContext] Error switching restaurant:', err);
+    } finally {
+      isSwitchingRestaurantRef.current = false;
+      setIsSwitchingRestaurant(false);
     }
   }, [dispatch, fetchGlobalOrders]);
 
@@ -1181,6 +1334,8 @@ export const OrdersProvider = ({ children }) => {
         hasPendingOtherRestaurantOrders,
         hasMultipleRestaurants,
         switchRestaurant,
+        isSwitchingRestaurant,
+        updateRestaurantActiveStatus,
       }}
     >
       {children}

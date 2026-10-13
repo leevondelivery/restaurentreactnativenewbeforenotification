@@ -18,13 +18,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 import { updateRestaurantTimings } from '@/services/api';
-
+import { useOrders } from '@/context/OrdersContext';
 import CustomLoader from '@/components/CustomLoader';
 
 import './restaurantprofile.css';
 
 export default function RestaurantProfileScreen() {
   const router = useRouter();
+  const { currentRestId, restaurantInfo, assignedRestaurants } = useOrders();
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -69,7 +70,7 @@ export default function RestaurantProfileScreen() {
 
   useEffect(() => {
     loadUserData();
-  }, []);
+  }, [currentRestId, restaurantInfo]);
 
   const loadUserData = async () => {
     try {
@@ -273,13 +274,18 @@ export default function RestaurantProfileScreen() {
   const angleDeg = selectedIndex * 30 - 90;
   const handRadius = 70;
 
-  const displayName = (userData?.name || 'TALIMPU').toUpperCase();
-  const emailVal = userData?.email || 'talimpu@gmail.com';
-  const phoneVal = userData?.phone || userData?.mobileNumber || 'Talimpu';
-  const addressVal = userData?.address || userData?.restLocation || 'Nandyal Road';
-  const fssaiVal = userData?.fssai || '1234567';
-  const openTimeVal = userData?.openTime || '10:00';
-  const closeTimeVal = userData?.closeTime || '17:30';
+  const activeBranch = (assignedRestaurants || []).find(
+    (r) => String(r.restId).trim().toLowerCase() === String(currentRestId).trim().toLowerCase()
+  );
+  const activeData = activeBranch?.rawUser || activeBranch || restaurantInfo || userData;
+
+  const displayName = (activeData?.name || restaurantInfo?.name || userData?.name || 'TALIMPU').toUpperCase();
+  const emailVal = activeData?.email || restaurantInfo?.email || userData?.email || 'talimpu@gmail.com';
+  const phoneVal = activeData?.phone || activeData?.mobileNumber || restaurantInfo?.phone || userData?.phone || '';
+  const addressVal = activeData?.address || activeData?.location || activeData?.restLocation || restaurantInfo?.address || userData?.address || '';
+  const fssaiVal = activeData?.fssai || restaurantInfo?.fssai || userData?.fssai || '';
+  const openTimeVal = activeData?.openTime || restaurantInfo?.openTime || userData?.openTime || '10:00';
+  const closeTimeVal = activeData?.closeTime || restaurantInfo?.closeTime || userData?.closeTime || '17:30';
 
   return (
     <SafeAreaView style={styles.container}>

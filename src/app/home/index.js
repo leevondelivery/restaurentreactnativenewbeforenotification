@@ -33,8 +33,25 @@ export default function HomeScreen() {
   const dispatch = useDispatch();
   const router = useRouter();
   const reduxUserData = useSelector((state) => state.user.userData);
-  const { acceptedByRestaurantsOrders, fetchGlobalOrders, restaurantInfo, currentRestId, hasMultipleRestaurants } = useOrders();
-  const initialActive = extractIsActiveStrict(reduxUserData) ?? false;
+  const {
+    acceptedByRestaurantsOrders,
+    fetchGlobalOrders,
+    restaurantInfo,
+    currentRestId,
+    assignedRestaurants,
+    hasMultipleRestaurants,
+    updateRestaurantActiveStatus,
+    isSwitchingRestaurant,
+  } = useOrders();
+
+  const activeProfile = (assignedRestaurants || []).find(
+    (r) => String(r.restId).trim().toLowerCase() === String(currentRestId).trim().toLowerCase()
+  );
+  const targetBranchActive = typeof activeProfile?.isActive === 'boolean'
+    ? activeProfile.isActive
+    : (typeof restaurantInfo?.isActive === 'boolean' ? restaurantInfo.isActive : false);
+  const initialActive = targetBranchActive;
+
   const [userData, setUserData] = useState(reduxUserData || null);
   const [isOpen, setIsOpen] = useState(initialActive);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -127,11 +144,21 @@ export default function HomeScreen() {
   const isUpdatingStatusRef = useRef(false);
   const isOpenRef = useRef(initialActive);
   const userDataRef = useRef(userData);
+  const reduxUserDataRef = useRef(reduxUserData);
+  const isSwitchingRestaurantRef = useRef(isSwitchingRestaurant);
   const lastUserToggleTimeRef = useRef(0);
 
   useEffect(() => {
     isUpdatingStatusRef.current = isUpdatingStatus;
   }, [isUpdatingStatus]);
+
+  useEffect(() => {
+    isSwitchingRestaurantRef.current = isSwitchingRestaurant;
+  }, [isSwitchingRestaurant]);
+
+  useEffect(() => {
+    reduxUserDataRef.current = reduxUserData;
+  }, [reduxUserData]);
 
   useEffect(() => {
     isOpenRef.current = isOpen;
@@ -142,6 +169,7 @@ export default function HomeScreen() {
   }, [userData]);
 
   const syncToggleState = useCallback((targetActiveBool, animate = true) => {
+    if (typeof targetActiveBool !== 'boolean') return;
     setIsOpen(targetActiveBool);
     isOpenRef.current = targetActiveBool;
     if (animate) {
@@ -156,20 +184,24 @@ export default function HomeScreen() {
     }
   }, [animVal]);
 
-  // Instantly sync user profile data from Redux if available without overriding active user interaction
+  // Always keep toggle button in exact sync with active restaurant branch
+  useEffect(() => {
+    if (isSwitchingRestaurant) return;
+    if (typeof targetBranchActive === 'boolean') {
+      if (targetBranchActive !== isOpenRef.current && Date.now() - lastUserToggleTimeRef.current >= 8000 && !isUpdatingStatusRef.current) {
+        syncToggleState(targetBranchActive, false);
+      }
+    }
+  }, [targetBranchActive, currentRestId, isSwitchingRestaurant, syncToggleState]);
+
+  // Sync profile data from Redux without overriding branch operational state
   useEffect(() => {
     if (reduxUserData) {
-      const activeBool = extractIsActiveStrict(reduxUserData);
       if (JSON.stringify(reduxUserData) !== JSON.stringify(userDataRef.current)) {
         setUserData(reduxUserData);
       }
-      if (Date.now() - lastUserToggleTimeRef.current >= 10000 && !isUpdatingStatusRef.current) {
-        if (typeof activeBool === 'boolean' && activeBool !== isOpenRef.current) {
-          syncToggleState(activeBool, false);
-        }
-      }
     }
-  }, [reduxUserData, syncToggleState]);
+  }, [reduxUserData]);
 
   // Helper to calculate exact Net Earnings after restaurant commission cut for an order
   const calculateOrderNetEarnings = useCallback((ord) => {
@@ -292,7 +324,11 @@ export default function HomeScreen() {
     setTotalOrders(totOrders);
   }, [acceptedByRestaurantsOrders, userData, restaurantInfo, calculateOrderNetEarnings]);
 
+  const isFetchingStatsRef = useRef(false);
+
   const fetchStats = useCallback(async (targetRestId) => {
+    if (isFetchingStatsRef.current) return;
+    isFetchingStatsRef.current = true;
     try {
       setLoadingStats(true);
 
@@ -302,11 +338,15 @@ export default function HomeScreen() {
       const response = await fetchAcceptedByRestaurants(targetRestId, controller.signal);
       clearTimeout(timeoutId);
 
+      if (!response || !response.ok) {
+        return;
+      }
+
       const data = await response.json();
       console.log('Fetched acceptedbyrestaurants orders for home stats:', data);
 
       // 1. Direct Backend Stats Handling: If backend returned pre-calculated stats numbers, use them directly
-      if (response.ok && data && data.todayEarnings !== undefined && data.totalEarnings !== undefined) {
+      if (data && data.todayEarnings !== undefined && data.totalEarnings !== undefined) {
         setTodayEarnings(Number(data.todayEarnings) || 0);
         setTodayOrders(Number(data.todayOrders) || 0);
         setTotalEarnings(Number(data.totalEarnings) || 0);
@@ -315,21 +355,19 @@ export default function HomeScreen() {
       }
 
       let rawOrdersList = [];
-      if (response.ok) {
-        if (Array.isArray(data.orders)) {
-          rawOrdersList = data.orders;
-        } else if (Array.isArray(data)) {
-          rawOrdersList = data;
-        } else if (Array.isArray(data.data)) {
-          rawOrdersList = data.data;
-        }
+      if (Array.isArray(data.orders)) {
+        rawOrdersList = data.orders;
+      } else if (Array.isArray(data)) {
+        rawOrdersList = data;
+      } else if (Array.isArray(data.data)) {
+        rawOrdersList = data.data;
       }
 
       // If acceptedbyrestorents didn't return an array or failed, try fallback /api/restaurant/stats endpoint
       if (rawOrdersList.length === 0) {
         try {
           const resStats = await fetchRestaurantStats(targetRestId);
-          if (resStats.ok) {
+          if (resStats && resStats.ok) {
             const statsJson = await resStats.json();
             if (statsJson && statsJson.todayEarnings !== undefined && statsJson.totalEarnings !== undefined) {
               setTodayEarnings(Number(statsJson.todayEarnings) || 0);
@@ -392,40 +430,36 @@ export default function HomeScreen() {
       }
     } finally {
       setLoadingStats(false);
+      isFetchingStatsRef.current = false;
     }
   }, [calculateOrderNetEarnings]);
 
+  const isPollingRef = useRef(false);
+
   const pollRestaurantStatus = useCallback(async () => {
-    // If currently updating or recently toggled by user, do not poll or override state
-    if (isUpdatingStatusRef.current) return;
+    // If currently updating, switching restaurants, recently toggled by user, or poll in-flight: skip
+    if (isUpdatingStatusRef.current || isSwitchingRestaurantRef.current || isPollingRef.current) return;
     if (Date.now() - lastUserToggleTimeRef.current < 10000) return;
 
+    isPollingRef.current = true;
     try {
-      let u = userDataRef.current;
-      const storedRestId = await AsyncStorage.getItem('restId');
-      if (!u || (!u._id && !u.restId && !u.phone)) {
-        const stored = await AsyncStorage.getItem('userData');
-        if (stored) {
-          try { u = JSON.parse(stored); } catch (e) { }
+      const storedSelected = await AsyncStorage.getItem('selectedRestId');
+      const storedRest = await AsyncStorage.getItem('restId');
+      let targetRestId = String(currentRestId || storedSelected || storedRest || '').trim();
+
+      const userSubs = userDataRef.current?.subrestaurentsId || reduxUserDataRef.current?.subrestaurentsId;
+      if (Array.isArray(userSubs) && userSubs.length > 0) {
+        if (!userSubs.includes(targetRestId)) {
+          targetRestId = userSubs[0];
         }
       }
+      if (!targetRestId) return;
 
-      const targetRestId = String(
-        u?.restId ||
-        u?.restaurantId ||
-        u?.restaurant_id ||
-        storedRestId ||
-        ''
-      ).trim();
-      const targetPhone = String(u?.phone || u?.mobileNumber || '').trim();
-      const targetUserId = String(u?._id || u?.id || '').trim();
+      // Strictly poll by respective targetRestId to match specific restaurant branch
+      const res = await fetchRestaurantStatus(targetRestId, null, null);
 
-      if (!targetRestId && !targetPhone && !targetUserId) return;
-
-      const res = await fetchRestaurantStatus(targetRestId, targetPhone, targetUserId);
-
-      // Discard poll result if user manually interacted while fetch was in-flight
-      if (isUpdatingStatusRef.current) return;
+      // Discard poll result if user manually interacted or switched while fetch was in-flight
+      if (isUpdatingStatusRef.current || isSwitchingRestaurantRef.current) return;
       if (Date.now() - lastUserToggleTimeRef.current < 10000) return;
 
       if (res && res.ok) {
@@ -433,75 +467,86 @@ export default function HomeScreen() {
         const remoteIsActive = extractIsActiveStrict(data);
         if (typeof remoteIsActive === 'boolean') {
           if (remoteIsActive !== isOpenRef.current) {
-            console.log('[Status Poll] Real-time MongoDB status sync:', remoteIsActive);
-            syncToggleState(remoteIsActive, true);
+            console.log(`[Status Poll] Live MongoDB status for branch #${targetRestId}:`, remoteIsActive);
+            syncToggleState(remoteIsActive, false); // NO flickering animation during poll!
           }
-          const updatedUserData = {
-            ...(userDataRef.current || u || {}),
-            ...(data.user || {}),
-            isActive: remoteIsActive,
-            is_active: remoteIsActive,
-            isOpen: remoteIsActive,
-            is_open: remoteIsActive,
-            status: remoteIsActive ? 'active' : 'closed',
-          };
-          setUserData(updatedUserData);
-          dispatch(setUser(updatedUserData));
-          await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData)).catch(() => { });
+          if (typeof updateRestaurantActiveStatus === 'function') {
+            updateRestaurantActiveStatus(targetRestId, remoteIsActive);
+          }
+
+          // Update active status in Redux & AsyncStorage WITHOUT wiping master account structure
+          const currentU = userDataRef.current || reduxUserDataRef.current || {};
+          const currentActive = extractIsActiveStrict(currentU);
+          // CRITICAL: Only dispatch if status actually changed in Redux! Prevents infinite re-render loops!
+          if (currentActive !== remoteIsActive) {
+            const updatedUserData = {
+              ...currentU,
+              restId: targetRestId,
+              restaurantId: targetRestId,
+              isActive: remoteIsActive,
+              is_active: remoteIsActive,
+              isOpen: remoteIsActive,
+              is_open: remoteIsActive,
+              status: remoteIsActive ? 'active' : 'closed',
+            };
+            setUserData(updatedUserData);
+            dispatch(setUser(updatedUserData));
+            await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData)).catch(() => { });
+            await AsyncStorage.setItem(`activeRestStatus_${targetRestId}`, String(remoteIsActive)).catch(() => { });
+          }
         }
       }
     } catch (err) {
       // Periodic background poll silently retries next interval on network glitch
+    } finally {
+      isPollingRef.current = false;
     }
-  }, [dispatch, syncToggleState]);
+  }, [currentRestId, dispatch, syncToggleState, updateRestaurantActiveStatus]);
 
   const loadUserData = useCallback(async () => {
-    if (isUpdatingStatusRef.current) return;
+    if (isUpdatingStatusRef.current || isSwitchingRestaurantRef.current) return;
 
     try {
       // Extend 30-day session countdown whenever app is used
       await AsyncStorage.setItem('lastActiveTimestamp', Date.now().toString());
       const storedUser = await AsyncStorage.getItem('userData');
-      const storedRestId = await AsyncStorage.getItem('restId');
-      let targetRestId = '';
+      const storedSelected = await AsyncStorage.getItem('selectedRestId');
+      const storedRest = await AsyncStorage.getItem('restId');
+      let targetRestId = String(currentRestId || storedSelected || storedRest || '').trim();
 
       if (storedUser) {
         const parsed = JSON.parse(storedUser);
         if (JSON.stringify(parsed) !== JSON.stringify(userDataRef.current)) {
           setUserData(parsed);
         }
-        const activeBool = extractIsActiveStrict(parsed);
-        if (
-          Date.now() - lastUserToggleTimeRef.current >= 10000 &&
-          typeof activeBool === 'boolean' &&
-          activeBool !== isOpenRef.current &&
-          !isUpdatingStatusRef.current
-        ) {
-          syncToggleState(activeBool, false);
-        }
-        targetRestId = String(
-          parsed?.restId ||
-          parsed?.restaurantId ||
-          parsed?.restaurant_id ||
-          parsed?._id ||
-          parsed?.id ||
-          ''
-        ).trim();
       }
 
-      if (!targetRestId && storedRestId) {
-        targetRestId = String(storedRestId).trim();
+      const userSubs = userDataRef.current?.subrestaurentsId || reduxUserDataRef.current?.subrestaurentsId;
+      if (Array.isArray(userSubs) && userSubs.length > 0) {
+        if (!userSubs.includes(targetRestId)) {
+          targetRestId = userSubs[0];
+        }
+      }
+
+      // Check branch-specific cached operational status
+      if (targetRestId) {
+        const cachedBranchStatus = await AsyncStorage.getItem(`activeRestStatus_${targetRestId}`);
+        if (cachedBranchStatus !== null && cachedBranchStatus !== undefined) {
+          const bBool = cachedBranchStatus === 'true';
+          if (bBool !== isOpenRef.current && Date.now() - lastUserToggleTimeRef.current >= 8000 && !isUpdatingStatusRef.current) {
+            syncToggleState(bBool, false);
+          }
+        }
       }
 
       fetchStats(targetRestId);
-      pollRestaurantStatus();
     } catch (error) {
       console.error('Error loading user data from AsyncStorage:', error);
       fetchStats('');
     }
-  }, [fetchStats, pollRestaurantStatus, syncToggleState]);
+  }, [currentRestId, fetchStats, syncToggleState]);
 
-  // Load stats on mount and whenever screen comes into focus, with 5s status polling interval
+  // Load stats on mount and whenever screen comes into focus, with polling interval
   useFocusEffect(
     useCallback(() => {
       loadUserData();
@@ -509,7 +554,7 @@ export default function HomeScreen() {
 
       const timerId = setInterval(() => {
         pollRestaurantStatus();
-      }, 5000);
+      }, 15000);
 
       return () => {
         clearInterval(timerId);
@@ -517,13 +562,22 @@ export default function HomeScreen() {
     }, [loadUserData, pollRestaurantStatus])
   );
 
-  // Automatically refresh stats and status when active restaurant is switched
+  // Automatically refresh stats and status ONLY when active restaurant is switched
+  const prevRestIdRef = useRef(currentRestId);
   useEffect(() => {
-    if (currentRestId) {
-      loadUserData();
-      pollRestaurantStatus();
+    if (currentRestId && currentRestId !== prevRestIdRef.current) {
+      prevRestIdRef.current = currentRestId;
+      const currentProfile = (assignedRestaurants || []).find(
+        (r) => String(r.restId).trim().toLowerCase() === String(currentRestId).trim().toLowerCase()
+      );
+      if (currentProfile && typeof currentProfile.isActive === 'boolean') {
+        if (!isUpdatingStatusRef.current) {
+          syncToggleState(currentProfile.isActive, false);
+        }
+      }
+      fetchStats(currentRestId);
     }
-  }, [currentRestId, loadUserData, pollRestaurantStatus]);
+  }, [currentRestId, assignedRestaurants, fetchStats, syncToggleState]);
 
   const handleToggle = async () => {
     if (isUpdatingStatusRef.current) return;
@@ -536,10 +590,27 @@ export default function HomeScreen() {
     // 1. Instantly trigger smooth optimistic UI animation & state update
     syncToggleState(nextState, true);
 
-    // 2. Deep update user data object including all top-level & nested entities
-    const currentU = userDataRef.current || {};
+    const storedSelected = await AsyncStorage.getItem('selectedRestId');
+    const storedRest = await AsyncStorage.getItem('restId');
+    let targetRestId = String(currentRestId || storedSelected || storedRest || '').trim();
+
+    const userSubs = userDataRef.current?.subrestaurentsId || reduxUserDataRef.current?.subrestaurentsId;
+    if (Array.isArray(userSubs) && userSubs.length > 0) {
+      if (!userSubs.includes(targetRestId)) {
+        targetRestId = userSubs[0];
+      }
+    }
+
+    if (typeof updateRestaurantActiveStatus === 'function') {
+      updateRestaurantActiveStatus(targetRestId, nextState);
+    }
+
+    // 2. Deep update user data object without wiping master account fields
+    const currentU = userDataRef.current || reduxUserData || {};
     const updatedUserData = {
       ...currentU,
+      restId: targetRestId,
+      restaurantId: targetRestId,
       isActive: nextState,
       is_active: nextState,
       isOpen: nextState,
@@ -547,66 +618,23 @@ export default function HomeScreen() {
       status: nextState ? 'active' : 'closed',
       active: nextState,
     };
-    if (updatedUserData.user && typeof updatedUserData.user === 'object') {
-      updatedUserData.user = {
-        ...updatedUserData.user,
-        isActive: nextState,
-        is_active: nextState,
-        isOpen: nextState,
-        is_open: nextState,
-        status: nextState ? 'active' : 'closed',
-      };
-    }
-    if (updatedUserData.restaurant && typeof updatedUserData.restaurant === 'object') {
-      updatedUserData.restaurant = {
-        ...updatedUserData.restaurant,
-        isActive: nextState,
-        is_active: nextState,
-        isOpen: nextState,
-        is_open: nextState,
-        status: nextState ? 'active' : 'closed',
-      };
-    }
-    if (updatedUserData.restaurantDetails && typeof updatedUserData.restaurantDetails === 'object') {
-      updatedUserData.restaurantDetails = {
-        ...updatedUserData.restaurantDetails,
-        isActive: nextState,
-        is_active: nextState,
-        isOpen: nextState,
-        is_open: nextState,
-        status: nextState ? 'active' : 'closed',
-      };
-    }
 
     setUserData(updatedUserData);
     dispatch(setUser(updatedUserData));
     try {
       await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData));
+      await AsyncStorage.setItem(`activeRestStatus_${targetRestId}`, String(nextState));
     } catch (err) {
       console.error('Error updating AsyncStorage on status toggle:', err);
     }
 
     // 3. Update MongoDB restuarentusers collection via API
+    // CRITICAL: Do NOT send master userId in payload! Send restId so MongoDB updates the EXACT selected branch.
     try {
-      const storedRestId = await AsyncStorage.getItem('restId');
-      const targetRestId =
-        currentU?.restId ||
-        currentU?.restaurantId ||
-        currentU?.restaurant_id ||
-        storedRestId ||
-        currentU?._id ||
-        currentU?.id ||
-        '';
-      const targetPhone = currentU?.phone || currentU?.mobileNumber || '';
-
       const payload = {
-        userId: currentU?._id || currentU?.id,
         restId: targetRestId,
         restaurantId: targetRestId,
         restaurant_id: targetRestId,
-        phone: targetPhone,
-        mobileNumber: targetPhone,
-        email: currentU?.email || '',
         isActive: nextState,
         is_active: nextState,
         isOpen: nextState,
@@ -615,7 +643,7 @@ export default function HomeScreen() {
         active: nextState,
       };
 
-      console.log('[Status Toggle] Sending API update payload:', payload);
+      console.log(`[Status Toggle] Sending API update payload for branch #${targetRestId}:`, payload);
       const response = await updateRestaurantStatus(payload);
 
       if (response && response.ok) {
@@ -624,6 +652,9 @@ export default function HomeScreen() {
         const confirmedIsActive = extractIsActiveStrict(data);
         if (typeof confirmedIsActive === 'boolean' && confirmedIsActive !== isOpenRef.current) {
           syncToggleState(confirmedIsActive, true);
+          if (typeof updateRestaurantActiveStatus === 'function') {
+            updateRestaurantActiveStatus(targetRestId, confirmedIsActive);
+          }
         }
       }
     } catch (err) {
@@ -662,15 +693,8 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Top-Left Restaurant Selector Dropdown (Shown when user has multiple assigned branches) ── */}
-        {hasMultipleRestaurants && (
-          <View style={styles.topHeaderRow}>
-            <RestaurantDropdown />
-          </View>
-        )}
-
         {/* ── Brand Header Pill ── */}
-        <View style={[styles.brandPill, hasMultipleRestaurants && styles.brandPillWithTopBar]}>
+        <View style={styles.brandPill}>
           <View style={styles.brandLogoCircle}>
             <Image
               source={require('../../../assets/images/leevon-logo.png')}
@@ -678,7 +702,9 @@ export default function HomeScreen() {
               resizeMode="contain"
             />
           </View>
-          <Text style={styles.brandName}>LEEVON DELIVERY LLP</Text>
+          <Text style={styles.brandName} numberOfLines={1}>
+            LEEVON DELIVERY LLP
+          </Text>
         </View>
 
         {/* ── OPEN / CLOSED Smooth Sliding Toggle Pill ── */}
@@ -739,6 +765,9 @@ export default function HomeScreen() {
             </Animated.View>
           </Animated.View>
         </TouchableOpacity>
+
+        {/* ── Restaurant Selector (Under toggle displaying active branch name) ── */}
+        <RestaurantDropdown />
 
         {/* ── NOTIFICATIONS ON / OFF Pill (Mobile Only) ── */}
         {Platform.OS !== 'web' && (
@@ -878,22 +907,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7F7EB',
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 120,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 105,
     alignItems: 'center',
-  },
-
-  /* ── Top Header Row for Restaurant Dropdown (Top-Left) ── */
-  topHeaderRow: {
-    width: '100%',
-    maxWidth: 400,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 4 : 8,
-    marginBottom: 8,
-    zIndex: 50,
   },
 
   /* ── Brand Header Pill ── */
@@ -904,38 +921,35 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     paddingVertical: 10,
     paddingLeft: 10,
-    paddingRight: 28,
+    paddingRight: 24,
     width: '100%',
     maxWidth: 400,
-    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 4 : 8,
-    marginBottom: 28,
+    marginTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 12) + 2 : 6,
+    marginBottom: 16,
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 3 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  brandPillWithTopBar: {
-    marginTop: 4,
+    shadowRadius: 6,
+    elevation: 2,
   },
   brandLogoCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#1E1E1E',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
   },
   brandLogoImage: {
-    width: 28,
-    height: 28,
+    width: 26,
+    height: 26,
   },
   brandName: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     color: '#2A2A2A',
-    letterSpacing: 1.0,
+    letterSpacing: 0.8,
     fontStyle: 'italic',
     flex: 1,
   },
@@ -943,16 +957,16 @@ const styles = StyleSheet.create({
   /* ── Smooth Animated Toggle Container ── */
   toggleContainer: {
     width: 196,
-    height: 54,
-    borderRadius: 27,
-    marginBottom: 16,
+    height: 52,
+    borderRadius: 26,
+    marginBottom: 12,
     position: 'relative',
     overflow: 'hidden',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
+    shadowOpacity: 0.2,
     shadowRadius: 8,
-    elevation: 5,
+    elevation: 4,
   },
   openTextWrapper: {
     position: 'absolute',
@@ -977,7 +991,7 @@ const styles = StyleSheet.create({
   powerCircle: {
     position: 'absolute',
     left: 8,
-    top: 8,
+    top: 7,
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -1001,11 +1015,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 50,
-    height: 46,
-    width: 220,
+    height: 44,
+    width: 210,
     gap: 8,
-    marginTop: 14,
-    marginBottom: 20,
+    marginTop: 12,
+    marginBottom: 18,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.12,
@@ -1026,10 +1040,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#1E1E1E',
     borderRadius: 50,
-    height: 54,
+    height: 52,
     width: 196,
     gap: 10,
-    marginBottom: 36,
+    marginBottom: 20,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.18,
@@ -1047,36 +1061,36 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 14,
+    gap: 12,
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 420,
     justifyContent: 'space-between',
   },
   statCard: {
-    width: '47.5%',
+    width: '48%',
     backgroundColor: '#E6DFD0',
-    borderRadius: 24,
-    paddingVertical: 26,
-    paddingHorizontal: 16,
+    borderRadius: 22,
+    paddingVertical: 18,
+    paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowRadius: 6,
+    elevation: 2,
   },
   statLabel: {
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
     color: '#7A7263',
-    letterSpacing: 0.8,
-    marginBottom: 12,
+    letterSpacing: 0.6,
+    marginBottom: 6,
     textAlign: 'center',
   },
   statValue: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
     color: '#1C1C1C',
     textAlign: 'center',
   },

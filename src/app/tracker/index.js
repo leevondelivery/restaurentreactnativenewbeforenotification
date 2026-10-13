@@ -1,4 +1,3 @@
-import RestaurantDropdown from '@/components/RestaurantDropdown';
 import { useOrders } from '@/context/OrdersContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
@@ -700,13 +699,6 @@ export default function TrackerScreen() {
           />
         }
       >
-        {/* ── Top-Left Restaurant Selector Dropdown (If multi-restaurant) ── */}
-        {hasMultipleRestaurants && (
-          <View style={{ width: '100%', maxWidth: 400, alignItems: 'flex-start', marginBottom: 10 }}>
-            <RestaurantDropdown />
-          </View>
-        )}
-
         {/* Header Pill */}
         <View style={styles.topHeaderPill}>
           <Ionicons name="checkmark-circle" size={20} color="#0AB28D" />

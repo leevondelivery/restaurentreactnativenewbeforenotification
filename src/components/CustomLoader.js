@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,6 +7,7 @@ import {
   Animated,
   Easing,
   Modal,
+  Platform,
 } from 'react-native';
 
 export default function CustomLoader({
@@ -14,26 +15,40 @@ export default function CustomLoader({
   title = 'Loading...',
   subtitle = 'Please wait',
   overlay = true,
+  timeoutMs = 6000,
 }) {
   const spinValue = useRef(new Animated.Value(0)).current;
+  const [autoDismissed, setAutoDismissed] = useState(false);
 
   useEffect(() => {
     if (visible) {
+      setAutoDismissed(false);
       spinValue.setValue(0);
       const animation = Animated.loop(
         Animated.timing(spinValue, {
           toValue: 1,
           duration: 1200,
           easing: Easing.linear,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         })
       );
       animation.start();
-      return () => animation.stop();
-    }
-  }, [visible]);
 
-  if (!visible) return null;
+      // Absolute safety timeout: never stay stuck for more than timeoutMs (default 6000ms)
+      const timer = setTimeout(() => {
+        setAutoDismissed(true);
+      }, timeoutMs);
+
+      return () => {
+        animation.stop();
+        clearTimeout(timer);
+      };
+    } else {
+      setAutoDismissed(false);
+    }
+  }, [visible, timeoutMs]);
+
+  if (!visible || autoDismissed) return null;
 
   const spin = spinValue.interpolate({
     inputRange: [0, 1],
@@ -72,8 +87,23 @@ export default function CustomLoader({
   );
 
   if (overlay) {
+    if (Platform.OS === 'web') {
+      return (
+        <View
+          style={[
+            styles.overlayContainer,
+            StyleSheet.absoluteFillObject,
+            { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999999 },
+          ]}
+          pointerEvents="auto"
+        >
+          {loaderContent}
+        </View>
+      );
+    }
+
     return (
-      <Modal transparent animationType="fade" visible={visible}>
+      <Modal transparent animationType="fade" visible={true} onRequestClose={() => {}}>
         <View style={styles.overlayContainer} pointerEvents="auto">
           {loaderContent}
         </View>
