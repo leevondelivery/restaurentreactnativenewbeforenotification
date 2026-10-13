@@ -94,13 +94,43 @@ const isForCurrentRestaurant = async (orderData) => {
   return true;
 };
 
+const extractOrderTargetRestId = (orderData) => {
+  if (!orderData) return '';
+  let restId =
+    extractRestId(orderData?.restaurantId) ||
+    extractRestId(orderData?.restId) ||
+    extractRestId(orderData?.restaurant_id) ||
+    extractRestId(orderData?.restaurant) ||
+    extractRestId(orderData?.storeId) ||
+    extractRestId(orderData?.vendorId);
+
+  if (!restId && orderData?.order) {
+    let innerOrder = orderData.order;
+    if (typeof innerOrder === 'string') {
+      try {
+        innerOrder = JSON.parse(innerOrder);
+      } catch (e) {}
+    }
+    if (innerOrder && typeof innerOrder === 'object') {
+      restId =
+        extractRestId(innerOrder?.restaurantId) ||
+        extractRestId(innerOrder?.restId) ||
+        extractRestId(innerOrder?.restaurant_id) ||
+        extractRestId(innerOrder?.restaurant) ||
+        extractRestId(innerOrder?.storeId) ||
+        extractRestId(innerOrder?.vendorId);
+    }
+  }
+  return restId || '';
+};
+
 SplashScreen.preventAutoHideAsync();
 
 function AppLayout() {
   const colorScheme = useColorScheme();
   const pathname = usePathname();
   const router = useRouter();
-  const { addIncomingOrderOptimistic, fetchGlobalOrders, isSwitchingRestaurant } = useOrders();
+  const { addIncomingOrderOptimistic, fetchGlobalOrders, isSwitchingRestaurant, switchRestaurant } = useOrders();
 
   useEffect(() => {
     SplashScreen.hideAsync();
@@ -119,6 +149,31 @@ function AppLayout() {
         }
       })();
     }
+
+    // Helper to auto-switch branch if notification is for a different branch
+    const handleNotificationTap = async (orderData, isReplace = false) => {
+      const orderId = orderData?.orderId || orderData?._id;
+      if (orderId) markOrderAsNotified(orderId);
+
+      const targetRestId = extractOrderTargetRestId(orderData);
+      if (targetRestId && switchRestaurant) {
+        try {
+          await switchRestaurant(targetRestId);
+        } catch (e) {
+          console.warn('[Layout] Auto-switch restaurant on notification tap notice:', e);
+        }
+      }
+
+      addIncomingOrderOptimistic(orderData);
+      fetchGlobalOrders(true);
+      if (isReplace) {
+        setTimeout(() => {
+          router.replace('/notifications');
+        }, 200);
+      } else {
+        router.push('/notifications');
+      }
+    };
 
     let unsubscribeFCM = () => {};
     let unsubscribeFCMTap = () => {};
@@ -151,58 +206,39 @@ function AppLayout() {
       });
 
       // 3. Handle FCM Notification Tap when app is opened from background
-      unsubscribeFCMTap = messaging().onNotificationOpenedApp((remoteMessage) => {
+      unsubscribeFCMTap = messaging().onNotificationOpenedApp(async (remoteMessage) => {
         console.log('Notification opened app from background:', remoteMessage);
         const orderData = remoteMessage?.data || remoteMessage?.notification || {};
-        const orderId = orderData?.orderId || orderData?._id;
-        if (orderId) markOrderAsNotified(orderId);
-        addIncomingOrderOptimistic(orderData);
-        fetchGlobalOrders(true);
-        router.push('/notifications');
+        await handleNotificationTap(orderData, false);
       });
 
       // 4. Handle Notification Tap when app is launched from killed state (FCM & Notifee)
       messaging()
         .getInitialNotification()
-        .then((remoteMessage) => {
+        .then(async (remoteMessage) => {
           if (remoteMessage) {
             console.log('FCM initial notification opened:', remoteMessage);
             const orderData = remoteMessage?.data || remoteMessage?.notification || {};
-            const orderId = orderData?.orderId || orderData?._id;
-            if (orderId) markOrderAsNotified(orderId);
-            addIncomingOrderOptimistic(orderData);
-            fetchGlobalOrders(true);
-            setTimeout(() => {
-              router.replace('/notifications');
-            }, 200);
+            await handleNotificationTap(orderData, true);
           }
         });
     }
 
     if (notifee) {
-      notifee.getInitialNotification().then((initialNotification) => {
+      notifee.getInitialNotification().then(async (initialNotification) => {
         if (initialNotification) {
           console.log('Notifee initial notification opened:', initialNotification);
           const orderData = initialNotification.notification?.data || {};
-          const orderId = orderData?.orderId || orderData?._id;
-          if (orderId) markOrderAsNotified(orderId);
-          addIncomingOrderOptimistic(orderData);
-          fetchGlobalOrders(true);
-          setTimeout(() => {
-            router.replace('/notifications');
-          }, 200);
+          await handleNotificationTap(orderData, true);
         }
       });
 
       // 5. Notifee Notification Interaction Listener (navigates to notifications/alerts page)
-      unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
+      unsubscribeNotifee = notifee.onForegroundEvent(async ({ type, detail }) => {
         const orderData = detail.notification?.data || {};
         const orderId = orderData?.orderId || orderData?._id;
         if (type === EventType?.PRESS || type === EventType?.ACTION_PRESS) {
-          if (orderId) markOrderAsNotified(orderId);
-          addIncomingOrderOptimistic(orderData);
-          fetchGlobalOrders(true);
-          router.push('/notifications');
+          await handleNotificationTap(orderData, false);
         } else if (type === EventType?.DISMISSED) {
           if (orderId) markOrderAsNotified(orderId);
         }
@@ -214,7 +250,7 @@ function AppLayout() {
       unsubscribeFCMTap();
       unsubscribeNotifee();
     };
-  }, [router, addIncomingOrderOptimistic, fetchGlobalOrders]);
+  }, [router, addIncomingOrderOptimistic, fetchGlobalOrders, switchRestaurant]);
 
   const hideNavbarOn = ['/login'];
   const isNavbarVisible = !hideNavbarOn.includes(pathname) && pathname !== '/';

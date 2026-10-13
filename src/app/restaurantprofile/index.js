@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -15,7 +15,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useDispatch } from 'react-redux';
+import { setUser } from '@/store/userSlice';
 import Constants from 'expo-constants';
 import { updateRestaurantTimings } from '@/services/api';
 import { useOrders } from '@/context/OrdersContext';
@@ -25,9 +27,20 @@ import './restaurantprofile.css';
 
 export default function RestaurantProfileScreen() {
   const router = useRouter();
-  const { currentRestId, restaurantInfo, assignedRestaurants } = useOrders();
+  const dispatch = useDispatch();
+  const {
+    currentRestId,
+    restaurantInfo,
+    assignedRestaurants,
+    updateRestaurantTimingsContext,
+    refreshRestaurantInfo,
+  } = useOrders();
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Instant local override state for timings so UI reflects changes immediately
+  const [customOpenTime, setCustomOpenTime] = useState(null);
+  const [customCloseTime, setCustomCloseTime] = useState(null);
 
   // Modal & Time Picker State
   const [modalVisible, setModalVisible] = useState(false);
@@ -69,8 +82,16 @@ export default function RestaurantProfileScreen() {
   const minuteNumbers = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
 
   useEffect(() => {
+    setCustomOpenTime(null);
+    setCustomCloseTime(null);
     loadUserData();
   }, [currentRestId, restaurantInfo]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadUserData();
+    }, [currentRestId])
+  );
 
   const loadUserData = async () => {
     try {
@@ -79,9 +100,6 @@ export default function RestaurantProfileScreen() {
       if (storedUserStr) {
         const parsed = JSON.parse(storedUserStr);
         setUserData(parsed);
-        initTimeStates(parsed.openTime || '10:00', parsed.closeTime || '17:30');
-      } else {
-        initTimeStates('10:00', '17:30');
       }
     } catch (err) {
       console.error('Error loading user data:', err);
@@ -93,6 +111,8 @@ export default function RestaurantProfileScreen() {
   const parseTime = (timeStr, defaultH = 10, defaultM = '00', defaultAmpm = 'AM') => {
     if (!timeStr) return { hour: defaultH, minute: defaultM, ampm: defaultAmpm };
     const clean = timeStr.trim();
+    const isPm = /pm/i.test(clean);
+    const isAm = /am/i.test(clean);
     const parts = clean.split(':');
     if (parts.length >= 2) {
       let h = parseInt(parts[0], 10);
@@ -100,11 +120,23 @@ export default function RestaurantProfileScreen() {
       const m = isNaN(mInt) ? '00' : mInt < 10 ? `0${mInt}` : `${mInt}`;
       let ampm = 'AM';
       if (isNaN(h)) h = defaultH;
-      if (h >= 12) {
+
+      if (isPm) {
         ampm = 'PM';
         if (h > 12) h -= 12;
-      } else if (h === 0) {
-        h = 12;
+      } else if (isAm) {
+        ampm = 'AM';
+        if (h === 0) h = 12;
+      } else {
+        if (h >= 12) {
+          ampm = 'PM';
+          if (h > 12) h -= 12;
+        } else if (h === 0) {
+          h = 12;
+          ampm = 'AM';
+        } else {
+          ampm = 'AM';
+        }
       }
       return { hour: h, minute: m, ampm };
     }
@@ -150,7 +182,7 @@ export default function RestaurantProfileScreen() {
   }, []);
 
   const handleOpenModal = () => {
-    initTimeStates(userData?.openTime || '10:00', userData?.closeTime || '17:30');
+    initTimeStates(openTimeVal, closeTimeVal);
     setActiveTab('opening');
     setActiveSubTab('Hours');
     setModalVisible(true);
@@ -160,53 +192,76 @@ export default function RestaurantProfileScreen() {
     const formattedOpen = format24h(openHour, openMinute, openAmpm);
     const formattedClose = format24h(closeHour, closeMinute, closeAmpm);
 
+    // 1. Immediately reflect updated timings in local state for instantaneous UI response
+    setCustomOpenTime(formattedOpen);
+    setCustomCloseTime(formattedClose);
+
+    const targetRestId =
+      currentRestId ||
+      activeBranch?.restId ||
+      activeData?.restId ||
+      userData?.restId ||
+      userData?.restaurantId ||
+      userData?.restaurant_id ||
+      userData?._id ||
+      '';
+    const targetPhone =
+      phoneVal ||
+      activeData?.phone ||
+      activeData?.mobileNumber ||
+      userData?.phone ||
+      userData?.mobileNumber ||
+      '';
+    const targetUserId =
+      activeData?._id ||
+      userData?._id ||
+      userData?.id ||
+      '';
+
+    // 2. Immediately update OrdersContext state in memory (assignedRestaurants & restaurantInfo)
+    if (typeof updateRestaurantTimingsContext === 'function') {
+      updateRestaurantTimingsContext(targetRestId, formattedOpen, formattedClose);
+    }
+
+    const updatedUserData = {
+      ...(userData || {}),
+      openTime: formattedOpen,
+      closeTime: formattedClose,
+    };
+    setUserData(updatedUserData);
+    try {
+      dispatch(setUser(updatedUserData));
+    } catch (e) {}
+    await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData)).catch(() => {});
+
+    // Close modal immediately so UI updates without lag
+    setModalVisible(false);
+
     try {
       setSaving(true);
 
-      const targetRestId =
-        userData?.restId ||
-        userData?.restaurantId ||
-        userData?.restaurant_id ||
-        userData?._id ||
-        '';
-      const targetPhone = userData?.phone || userData?.mobileNumber || '';
-
       const response = await updateRestaurantTimings({
-        userId: userData?._id,
+        userId: targetUserId,
         restId: targetRestId,
         phone: targetPhone,
         openTime: formattedOpen,
         closeTime: formattedClose,
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       console.log('Update timings response:', data);
 
-      const updatedUserData = {
-        ...(userData || {}),
-        openTime: formattedOpen,
-        closeTime: formattedClose,
-      };
-      await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData));
-      setUserData(updatedUserData);
-      setModalVisible(false);
-
-      if (response.ok && data.success) {
+      if (response.ok && data?.success) {
         showCustomAlert('Restaurant timings updated successfully!', 'success');
       } else {
         showCustomAlert('Restaurant timings updated!', 'success');
       }
-    } catch (err) {
-      console.error('Error saving timings:', err);
-      const updatedUserData = {
-        ...(userData || {}),
-        openTime: formattedOpen,
-        closeTime: formattedClose,
-      };
-      await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData));
-      setUserData(updatedUserData);
-      setModalVisible(false);
 
+      if (typeof refreshRestaurantInfo === 'function') {
+        refreshRestaurantInfo().catch(() => {});
+      }
+    } catch (err) {
+      console.error('Error saving timings to backend:', err);
       showCustomAlert('Restaurant timings updated!', 'success');
     } finally {
       setSaving(false);
@@ -284,8 +339,8 @@ export default function RestaurantProfileScreen() {
   const phoneVal = activeData?.phone || activeData?.mobileNumber || restaurantInfo?.phone || userData?.phone || '';
   const addressVal = activeData?.address || activeData?.location || activeData?.restLocation || restaurantInfo?.address || userData?.address || '';
   const fssaiVal = activeData?.fssai || restaurantInfo?.fssai || userData?.fssai || '';
-  const openTimeVal = activeData?.openTime || restaurantInfo?.openTime || userData?.openTime || '10:00';
-  const closeTimeVal = activeData?.closeTime || restaurantInfo?.closeTime || userData?.closeTime || '17:30';
+  const openTimeVal = customOpenTime || activeData?.openTime || restaurantInfo?.openTime || userData?.openTime || '10:00';
+  const closeTimeVal = customCloseTime || activeData?.closeTime || restaurantInfo?.closeTime || userData?.closeTime || '17:30';
 
   return (
     <SafeAreaView style={styles.container}>

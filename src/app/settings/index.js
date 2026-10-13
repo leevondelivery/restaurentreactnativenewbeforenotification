@@ -228,14 +228,8 @@ export default function SettingsScreen() {
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.userNameText}>{displayName}</Text>
-            {currentRestId ? (
-              <View style={styles.userPhoneRow}>
-                <Ionicons name="storefront-outline" size={14} color="#8A8168" />
-                <Text style={styles.userPhoneText}>Branch #{currentRestId}</Text>
-              </View>
-            ) : null}
             {displayPhone ? (
-              <View style={[styles.userPhoneRow, { marginTop: 2 }]}>
+              <View style={styles.userPhoneRow}>
                 <Ionicons name="call-outline" size={14} color="#8A8168" />
                 <Text style={styles.userPhoneText}>{displayPhone}</Text>
               </View>

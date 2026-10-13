@@ -41,6 +41,7 @@ export default function HomeScreen() {
     assignedRestaurants,
     hasMultipleRestaurants,
     updateRestaurantActiveStatus,
+    updateRestaurantFCMTokenContext,
     isSwitchingRestaurant,
   } = useOrders();
 
@@ -57,6 +58,7 @@ export default function HomeScreen() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [isNotifActive, setIsNotifActive] = useState(false);
   const [isTogglingNotif, setIsTogglingNotif] = useState(false);
+  const lastNotifToggleTimeRef = useRef(0);
   const [notifModalVisible, setNotifModalVisible] = useState(false);
   const [notifModalConfig, setNotifModalConfig] = useState({
     type: 'success',
@@ -69,20 +71,80 @@ export default function HomeScreen() {
     setNotifModalVisible(true);
   };
 
+  // Pre-load cached notification toggle state on startup to prevent UI flicker
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    AsyncStorage.getItem('isNotifEnabled')
+      .then((val) => {
+        if (val === 'true') {
+          setIsNotifActive(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const syncNotifStatusWithBackend = useCallback(async () => {
     if (Platform.OS === 'web') return;
     try {
-      const dbFcmToken = reduxUserData?.fcmToken || userData?.fcmToken;
+      if (isTogglingNotif || Date.now() - lastNotifToggleTimeRef.current < 8000) return;
+
+      const storedSelected = await AsyncStorage.getItem('selectedRestId');
+      const storedRest = await AsyncStorage.getItem('restId');
+      const currentU = userDataRef.current || reduxUserDataRef.current || {};
+      const targetRestId = String(currentRestId || storedSelected || storedRest || currentU.restId || currentU.restaurantId || currentU._id || '').trim();
+      const targetPhone = String(currentU.phone || currentU.mobileNumber || '').trim();
+      const targetUserId = String(currentU._id || currentU.id || '').trim();
+
+      // 1. Check DB fcmToken from assignedRestaurants (loaded from MongoDB by OrdersContext)
+      const currentProfile = (assignedRestaurants || []).find(
+        (r) => String(r.restId).trim().toLowerCase() === targetRestId.toLowerCase()
+      );
+      let dbFcmToken =
+        currentProfile?.rawUser?.fcmToken ??
+        currentProfile?.fcmToken ??
+        restaurantInfo?.fcmToken ??
+        currentU?.fcmToken ??
+        '';
+
+      // 2. If not yet in memory or to verify with live MongoDB
+      if (!dbFcmToken && (targetRestId || targetPhone || targetUserId)) {
+        try {
+          const res = await fetchRestaurantStatus(targetRestId, targetPhone, targetUserId);
+          if (res && res.ok) {
+            const data = await res.json();
+            const dbUser = data.user || res.user;
+            if (dbUser && dbUser.fcmToken !== undefined) {
+              dbFcmToken = dbUser.fcmToken || '';
+            }
+          }
+        } catch (fetchErr) {
+          console.warn('[Notif Sync] Live DB status fetch notice:', fetchErr?.message);
+        }
+      }
+
+      // 3. If MongoDB has no fcmToken registered (empty or null), notifications are OFF in DB!
       if (!dbFcmToken || String(dbFcmToken).trim() === '') {
         setIsNotifActive(false);
         await AsyncStorage.setItem('isNotifEnabled', 'false');
         return;
       }
+
+      // 4. If MongoDB HAS a token, verify if THIS physical device's FCM token matches the DB token
       const isActiveOnThisDevice = await checkIsThisDeviceActiveForFCM(dbFcmToken);
       setIsNotifActive(isActiveOnThisDevice);
       await AsyncStorage.setItem('isNotifEnabled', isActiveOnThisDevice ? 'true' : 'false');
-    } catch (e) {}
-  }, [reduxUserData, userData]);
+
+      // 5. Keep userData & Redux in sync with the confirmed DB token
+      if (isActiveOnThisDevice && currentU && currentU.fcmToken !== dbFcmToken) {
+        const updatedU = { ...currentU, fcmToken: dbFcmToken };
+        setUserData(updatedU);
+        dispatch(setUser(updatedU));
+        AsyncStorage.setItem('userData', JSON.stringify(updatedU)).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[Notif Sync] Error syncing notification status with backend:', e);
+    }
+  }, [currentRestId, assignedRestaurants, restaurantInfo, isTogglingNotif, dispatch]);
 
   useEffect(() => {
     syncNotifStatusWithBackend();
@@ -97,9 +159,19 @@ export default function HomeScreen() {
   const handleNotifToggle = async () => {
     if (isTogglingNotif) return;
     setIsTogglingNotif(true);
+    lastNotifToggleTimeRef.current = Date.now();
 
     const nextState = !isNotifActive;
     const currentU = userDataRef.current || reduxUserData;
+
+    const targetRestId = String(
+      currentRestId ||
+      currentU?.restId ||
+      currentU?.restaurantId ||
+      currentU?.restaurant_id ||
+      currentU?._id ||
+      ''
+    ).trim();
 
     try {
       if (nextState) {
@@ -108,6 +180,20 @@ export default function HomeScreen() {
         if (res && res.success) {
           setIsNotifActive(true);
           await AsyncStorage.setItem('isNotifEnabled', 'true');
+          const token = res.token;
+          if (token) {
+            if (typeof updateRestaurantFCMTokenContext === 'function') {
+              updateRestaurantFCMTokenContext(targetRestId, token);
+            }
+            const updatedUser = {
+              ...(currentU || {}),
+              fcmToken: token,
+            };
+            setUserData(updatedUser);
+            dispatch(setUser(updatedUser));
+            await AsyncStorage.setItem('userData', JSON.stringify(updatedUser)).catch(() => {});
+            await AsyncStorage.setItem('fcmToken', token).catch(() => {});
+          }
           showNotifModal('success', 'Notifications Enabled', 'Incoming order alerts will ring on this device.');
         } else {
           setIsNotifActive(false);
@@ -120,9 +206,28 @@ export default function HomeScreen() {
         }
       } else {
         console.log('[Notif Toggle] Disabling notifications for this device...');
-        await clearFCMTokenOnLogout(currentU);
         setIsNotifActive(false);
         await AsyncStorage.setItem('isNotifEnabled', 'false');
+        await AsyncStorage.removeItem('fcmToken').catch(() => {});
+
+        if (typeof updateRestaurantFCMTokenContext === 'function') {
+          updateRestaurantFCMTokenContext(targetRestId, '');
+        }
+
+        const updatedUser = {
+          ...(currentU || {}),
+          fcmToken: '',
+        };
+        setUserData(updatedUser);
+        dispatch(setUser(updatedUser));
+        await AsyncStorage.setItem('userData', JSON.stringify(updatedUser)).catch(() => {});
+
+        try {
+          await clearFCMTokenOnLogout(currentU);
+        } catch (clearErr) {
+          console.warn('[Notif Toggle] Error clearing FCM token on backend:', clearErr);
+        }
+
         showNotifModal('off', 'Notifications Disabled', 'Push notifications paused for this device.');
       }
     } catch (err) {

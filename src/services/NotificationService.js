@@ -279,6 +279,11 @@ export async function checkIsThisDeviceActiveForFCM(dbFcmToken) {
     try {
       deviceToken = await messaging().getToken();
     } catch (e) {}
+    if (!deviceToken) {
+      try {
+        deviceToken = await AsyncStorage.getItem('fcmToken');
+      } catch (e) {}
+    }
     if (!deviceToken) return false;
     return String(dbFcmToken).trim() === String(deviceToken).trim();
   } catch (e) {
@@ -426,8 +431,13 @@ export async function clearFCMTokenOnLogout(userParam) {
       if (stored) userObj = JSON.parse(stored);
     }
 
+    let storedRest = '';
+    try {
+      storedRest = (await AsyncStorage.getItem('restId')) || (await AsyncStorage.getItem('selectedRestId')) || '';
+    } catch (e) {}
+
     const userId = userObj?._id || userObj?.id || '';
-    const restId = userObj?.restId || userObj?.restaurantId || userObj?.restaurant_id || '';
+    const restId = userObj?.restId || userObj?.restaurantId || userObj?.restaurant_id || storedRest || userId || '';
     const phone = userObj?.phone || userObj?.mobileNumber || '';
     const email = userObj?.email || '';
     const subrestaurentsId = userObj?.subrestaurentsId || userObj?.subrestaurantsId || userObj?.subrestaurents_id || userObj?.subrestaurants_id || null;

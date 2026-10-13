@@ -220,6 +220,9 @@ export const OrdersProvider = ({ children }) => {
           isActive: isActiveBool,
           address: found?.address || found?.location || '',
           phone: found?.phone || '',
+          openTime: found?.openTime || (id === targetRestId ? parsedUser?.openTime : '') || '10:00',
+          closeTime: found?.closeTime || (id === targetRestId ? parsedUser?.closeTime : '') || '17:30',
+          fcmToken: found?.fcmToken || (id === targetRestId ? parsedUser?.fcmToken : '') || '',
           rawUser: found || null,
         };
       });
@@ -361,6 +364,9 @@ export const OrdersProvider = ({ children }) => {
         fssai,
         lat,
         lng,
+        openTime: activeProfile?.openTime || parsedUser?.openTime || '10:00',
+        closeTime: activeProfile?.closeTime || parsedUser?.closeTime || '17:30',
+        fcmToken: activeProfile?.fcmToken || parsedUser?.fcmToken || '',
         isActive: branchIsActive,
       };
 
@@ -708,6 +714,64 @@ export const OrdersProvider = ({ children }) => {
     );
     setAssignedRestaurants(updated);
     assignedRestaurantsRef.current = updated;
+  }, []);
+
+  // Helper to dynamically update in-memory open & close timings for any restaurant
+  const updateRestaurantTimingsContext = useCallback((restId, openTime, closeTime) => {
+    const sid = String(restId || '').trim().toLowerCase();
+    const curSid = String(currentRestIdRef.current || '').trim().toLowerCase();
+    const updated = (assignedRestaurantsRef.current || []).map((r) => {
+      const match = !sid || String(r.restId).trim().toLowerCase() === sid;
+      if (match) {
+        return {
+          ...r,
+          openTime,
+          closeTime,
+          rawUser: r.rawUser
+            ? { ...r.rawUser, openTime, closeTime }
+            : { openTime, closeTime },
+        };
+      }
+      return r;
+    });
+    setAssignedRestaurants(updated);
+    assignedRestaurantsRef.current = updated;
+
+    if (!sid || sid === curSid) {
+      setRestaurantInfo((prev) => ({
+        ...prev,
+        openTime,
+        closeTime,
+      }));
+    }
+  }, []);
+
+  // Helper to dynamically update in-memory fcmToken for any restaurant
+  const updateRestaurantFCMTokenContext = useCallback((restId, fcmToken) => {
+    const sid = String(restId || '').trim().toLowerCase();
+    const curSid = String(currentRestIdRef.current || '').trim().toLowerCase();
+    const updated = (assignedRestaurantsRef.current || []).map((r) => {
+      const match = !sid || String(r.restId).trim().toLowerCase() === sid;
+      if (match) {
+        return {
+          ...r,
+          fcmToken,
+          rawUser: r.rawUser
+            ? { ...r.rawUser, fcmToken }
+            : { fcmToken },
+        };
+      }
+      return r;
+    });
+    setAssignedRestaurants(updated);
+    assignedRestaurantsRef.current = updated;
+
+    if (!sid || sid === curSid) {
+      setRestaurantInfo((prev) => ({
+        ...prev,
+        fcmToken,
+      }));
+    }
   }, []);
 
   // Switch active restaurant with isolated storage & instantaneous UI update
@@ -1336,6 +1400,9 @@ export const OrdersProvider = ({ children }) => {
         switchRestaurant,
         isSwitchingRestaurant,
         updateRestaurantActiveStatus,
+        updateRestaurantTimingsContext,
+        updateRestaurantTimingsLocally: updateRestaurantTimingsContext,
+        updateRestaurantFCMTokenContext,
       }}
     >
       {children}
