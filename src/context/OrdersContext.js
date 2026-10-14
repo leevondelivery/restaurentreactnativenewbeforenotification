@@ -222,6 +222,9 @@ export const OrdersProvider = ({ children }) => {
           phone: found?.phone || '',
           openTime: found?.openTime || (id === targetRestId ? parsedUser?.openTime : '') || '10:00',
           closeTime: found?.closeTime || (id === targetRestId ? parsedUser?.closeTime : '') || '17:30',
+          openTime2: found?.openTime2 || (id === targetRestId ? parsedUser?.openTime2 : '') || '',
+          closeTime2: found?.closeTime2 || (id === targetRestId ? parsedUser?.closeTime2 : '') || '',
+          timings: found?.timings || (id === targetRestId ? parsedUser?.timings : null) || [],
           fcmToken: found?.fcmToken || (id === targetRestId ? parsedUser?.fcmToken : '') || '',
           rawUser: found || null,
         };
@@ -366,6 +369,9 @@ export const OrdersProvider = ({ children }) => {
         lng,
         openTime: activeProfile?.openTime || parsedUser?.openTime || '10:00',
         closeTime: activeProfile?.closeTime || parsedUser?.closeTime || '17:30',
+        openTime2: activeProfile?.openTime2 || parsedUser?.openTime2 || '',
+        closeTime2: activeProfile?.closeTime2 || parsedUser?.closeTime2 || '',
+        timings: activeProfile?.timings || parsedUser?.timings || [],
         fcmToken: activeProfile?.fcmToken || parsedUser?.fcmToken || '',
         isActive: branchIsActive,
       };
@@ -717,9 +723,16 @@ export const OrdersProvider = ({ children }) => {
   }, []);
 
   // Helper to dynamically update in-memory open & close timings for any restaurant
-  const updateRestaurantTimingsContext = useCallback((restId, openTime, closeTime) => {
+  const updateRestaurantTimingsContext = useCallback((restId, openTime, closeTime, openTime2, closeTime2, timings) => {
     const sid = String(restId || '').trim().toLowerCase();
     const curSid = String(currentRestIdRef.current || '').trim().toLowerCase();
+    const timingsArr = Array.isArray(timings) && timings.length > 0
+      ? timings
+      : [
+          { openTime: openTime || '', closeTime: closeTime || '' },
+          ...(openTime2 || closeTime2 ? [{ openTime: openTime2 || '', closeTime: closeTime2 || '' }] : [])
+        ];
+
     const updated = (assignedRestaurantsRef.current || []).map((r) => {
       const match = !sid || String(r.restId).trim().toLowerCase() === sid;
       if (match) {
@@ -727,9 +740,12 @@ export const OrdersProvider = ({ children }) => {
           ...r,
           openTime,
           closeTime,
+          openTime2: openTime2 || '',
+          closeTime2: closeTime2 || '',
+          timings: timingsArr,
           rawUser: r.rawUser
-            ? { ...r.rawUser, openTime, closeTime }
-            : { openTime, closeTime },
+            ? { ...r.rawUser, openTime, closeTime, openTime2: openTime2 || '', closeTime2: closeTime2 || '', timings: timingsArr }
+            : { openTime, closeTime, openTime2: openTime2 || '', closeTime2: closeTime2 || '', timings: timingsArr },
         };
       }
       return r;
@@ -742,6 +758,9 @@ export const OrdersProvider = ({ children }) => {
         ...prev,
         openTime,
         closeTime,
+        openTime2: openTime2 || '',
+        closeTime2: closeTime2 || '',
+        timings: timingsArr,
       }));
     }
   }, []);
@@ -865,6 +884,9 @@ export const OrdersProvider = ({ children }) => {
               phone: matchedFound?.phone || r.phone || '',
               openTime: matchedFound?.openTime || r.openTime || '00:00',
               closeTime: matchedFound?.closeTime || r.closeTime || '00:01',
+              openTime2: matchedFound?.openTime2 || r.openTime2 || '',
+              closeTime2: matchedFound?.closeTime2 || r.closeTime2 || '',
+              timings: matchedFound?.timings || r.timings || [],
               fssai: matchedFound?.fssai || r.fssai || '',
               rawUser: matchedFound || r.rawUser,
             }
@@ -894,6 +916,9 @@ export const OrdersProvider = ({ children }) => {
             fssai: matchedFound?.fssai || u.fssai,
             openTime: matchedFound?.openTime || u.openTime || '00:00',
             closeTime: matchedFound?.closeTime || u.closeTime || '00:01',
+            openTime2: matchedFound?.openTime2 || u.openTime2 || '',
+            closeTime2: matchedFound?.closeTime2 || u.closeTime2 || '',
+            timings: matchedFound?.timings || u.timings || [],
             phone: matchedFound?.phone || u.phone,
             email: matchedFound?.email || u.email,
             commission: targetCommission,
@@ -922,6 +947,9 @@ export const OrdersProvider = ({ children }) => {
         fssai: matchedFound?.fssai || '',
         openTime: matchedFound?.openTime || '00:00',
         closeTime: matchedFound?.closeTime || '00:01',
+        openTime2: matchedFound?.openTime2 || '',
+        closeTime2: matchedFound?.closeTime2 || '',
+        timings: matchedFound?.timings || [],
         isActive: finalActive,
       });
 

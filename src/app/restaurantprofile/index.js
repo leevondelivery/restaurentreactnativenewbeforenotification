@@ -39,11 +39,12 @@ export default function RestaurantProfileScreen() {
   const [loading, setLoading] = useState(true);
 
   // Instant local override state for timings so UI reflects changes immediately
-  const [customOpenTime, setCustomOpenTime] = useState(null);
-  const [customCloseTime, setCustomCloseTime] = useState(null);
+  const [customTimings, setCustomTimings] = useState(null);
 
   // Modal & Time Picker State
   const [modalVisible, setModalVisible] = useState(false);
+  const [modalSlots, setModalSlots] = useState([{ openTime: '10:00', closeTime: '17:30' }]);
+  const [activeSlotIdx, setActiveSlotIdx] = useState(0);
   const [saving, setSaving] = useState(false);
 
   // Custom Alert State
@@ -82,8 +83,7 @@ export default function RestaurantProfileScreen() {
   const minuteNumbers = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
 
   useEffect(() => {
-    setCustomOpenTime(null);
-    setCustomCloseTime(null);
+    setCustomTimings(null);
     loadUserData();
   }, [currentRestId, restaurantInfo]);
 
@@ -181,20 +181,87 @@ export default function RestaurantProfileScreen() {
     return () => sub.remove();
   }, []);
 
-  const handleOpenModal = () => {
-    initTimeStates(openTimeVal, closeTimeVal);
+  const handleOpenModal = (targetSlotIndex = 0) => {
+    let currentSlots = [...timingsList];
+    if (targetSlotIndex === 1 && currentSlots.length < 2) {
+      // Direct request to add 2nd timing slot
+      const newSlot = { openTime: '18:00', closeTime: '23:00' };
+      currentSlots = [...currentSlots, newSlot];
+      setModalSlots(currentSlots);
+      setActiveSlotIdx(1);
+      initTimeStates('18:00', '23:00');
+    } else {
+      setModalSlots(currentSlots);
+      const safeIdx = targetSlotIndex < currentSlots.length ? targetSlotIndex : 0;
+      setActiveSlotIdx(safeIdx);
+      const targetSlot = currentSlots[safeIdx] || { openTime: '10:00', closeTime: '17:30' };
+      initTimeStates(targetSlot.openTime, targetSlot.closeTime);
+    }
     setActiveTab('opening');
     setActiveSubTab('Hours');
     setModalVisible(true);
+  };
+
+  const handleSwitchSlot = (newIdx) => {
+    const curOpen = format24h(openHour, openMinute, openAmpm);
+    const curClose = format24h(closeHour, closeMinute, closeAmpm);
+    const updated = modalSlots.map((s, idx) =>
+      idx === activeSlotIdx ? { openTime: curOpen, closeTime: curClose } : s
+    );
+    setModalSlots(updated);
+    setActiveSlotIdx(newIdx);
+    const nextSlot = updated[newIdx] || { openTime: '10:00', closeTime: '17:30' };
+    initTimeStates(nextSlot.openTime, nextSlot.closeTime);
+    setActiveTab('opening');
+    setActiveSubTab('Hours');
+  };
+
+  const handleAddSlotInModal = () => {
+    const curOpen = format24h(openHour, openMinute, openAmpm);
+    const curClose = format24h(closeHour, closeMinute, closeAmpm);
+    const updated = modalSlots.map((s, idx) =>
+      idx === activeSlotIdx ? { openTime: curOpen, closeTime: curClose } : s
+    );
+    const newSlot = { openTime: '18:00', closeTime: '23:00' };
+    const withNew = [...updated, newSlot];
+    setModalSlots(withNew);
+    setActiveSlotIdx(1);
+    initTimeStates(newSlot.openTime, newSlot.closeTime);
+    setActiveTab('opening');
+    setActiveSubTab('Hours');
+  };
+
+  const handleRemoveSlotInModal = (removeIdx) => {
+    if (modalSlots.length > 1) {
+      const remaining = modalSlots.filter((_, idx) => idx !== removeIdx);
+      setModalSlots(remaining);
+      setActiveSlotIdx(0);
+      initTimeStates(remaining[0].openTime, remaining[0].closeTime);
+      setActiveTab('opening');
+      setActiveSubTab('Hours');
+    }
   };
 
   const handleSaveTimings = async () => {
     const formattedOpen = format24h(openHour, openMinute, openAmpm);
     const formattedClose = format24h(closeHour, closeMinute, closeAmpm);
 
-    // 1. Immediately reflect updated timings in local state for instantaneous UI response
-    setCustomOpenTime(formattedOpen);
-    setCustomCloseTime(formattedClose);
+    const finalSlots = modalSlots.map((s, idx) => {
+      if (idx === activeSlotIdx) {
+        return { openTime: formattedOpen, closeTime: formattedClose };
+      }
+      return s;
+    });
+
+    const s1 = finalSlots[0] || { openTime: formattedOpen, closeTime: formattedClose };
+    const s2 = finalSlots[1] || null;
+    const finalOpenTime = s1.openTime || '';
+    const finalCloseTime = s1.closeTime || '';
+    const finalOpenTime2 = s2 ? (s2.openTime || '') : '';
+    const finalCloseTime2 = s2 ? (s2.closeTime || '') : '';
+
+    // 1. Immediately reflect updated timings in local state
+    setCustomTimings(finalSlots);
 
     const targetRestId =
       currentRestId ||
@@ -218,15 +285,25 @@ export default function RestaurantProfileScreen() {
       userData?.id ||
       '';
 
-    // 2. Immediately update OrdersContext state in memory (assignedRestaurants & restaurantInfo)
+    // 2. Immediately update OrdersContext state in memory
     if (typeof updateRestaurantTimingsContext === 'function') {
-      updateRestaurantTimingsContext(targetRestId, formattedOpen, formattedClose);
+      updateRestaurantTimingsContext(
+        targetRestId,
+        finalOpenTime,
+        finalCloseTime,
+        finalOpenTime2,
+        finalCloseTime2,
+        finalSlots
+      );
     }
 
     const updatedUserData = {
       ...(userData || {}),
-      openTime: formattedOpen,
-      closeTime: formattedClose,
+      openTime: finalOpenTime,
+      closeTime: finalCloseTime,
+      openTime2: finalOpenTime2,
+      closeTime2: finalCloseTime2,
+      timings: finalSlots,
     };
     setUserData(updatedUserData);
     try {
@@ -239,13 +316,15 @@ export default function RestaurantProfileScreen() {
 
     try {
       setSaving(true);
-
       const response = await updateRestaurantTimings({
         userId: targetUserId,
         restId: targetRestId,
         phone: targetPhone,
-        openTime: formattedOpen,
-        closeTime: formattedClose,
+        openTime: finalOpenTime,
+        closeTime: finalCloseTime,
+        openTime2: finalOpenTime2,
+        closeTime2: finalCloseTime2,
+        timings: finalSlots,
       });
 
       const data = await response.json().catch(() => ({}));
@@ -263,6 +342,90 @@ export default function RestaurantProfileScreen() {
     } catch (err) {
       console.error('Error saving timings to backend:', err);
       showCustomAlert('Restaurant timings updated!', 'success');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteSlot = async (slotIdxToDelete) => {
+    const remainingSlots = timingsList.filter((_, idx) => idx !== slotIdxToDelete);
+    if (remainingSlots.length === 0) return;
+
+    const s1 = remainingSlots[0];
+    const s2 = remainingSlots[1] || null;
+    const finalOpenTime = s1.openTime || '';
+    const finalCloseTime = s1.closeTime || '';
+    const finalOpenTime2 = s2 ? (s2.openTime || '') : '';
+    const finalCloseTime2 = s2 ? (s2.closeTime || '') : '';
+
+    setCustomTimings(remainingSlots);
+
+    const targetRestId =
+      currentRestId ||
+      activeBranch?.restId ||
+      activeData?.restId ||
+      userData?.restId ||
+      userData?.restaurantId ||
+      userData?.restaurant_id ||
+      userData?._id ||
+      '';
+    const targetPhone =
+      phoneVal ||
+      activeData?.phone ||
+      activeData?.mobileNumber ||
+      userData?.phone ||
+      userData?.mobileNumber ||
+      '';
+    const targetUserId =
+      activeData?._id ||
+      userData?._id ||
+      userData?.id ||
+      '';
+
+    if (typeof updateRestaurantTimingsContext === 'function') {
+      updateRestaurantTimingsContext(
+        targetRestId,
+        finalOpenTime,
+        finalCloseTime,
+        finalOpenTime2,
+        finalCloseTime2,
+        remainingSlots
+      );
+    }
+
+    const updatedUserData = {
+      ...(userData || {}),
+      openTime: finalOpenTime,
+      closeTime: finalCloseTime,
+      openTime2: finalOpenTime2,
+      closeTime2: finalCloseTime2,
+      timings: remainingSlots,
+    };
+    setUserData(updatedUserData);
+    try {
+      dispatch(setUser(updatedUserData));
+    } catch (e) {}
+    await AsyncStorage.setItem('userData', JSON.stringify(updatedUserData)).catch(() => {});
+
+    try {
+      setSaving(true);
+      await updateRestaurantTimings({
+        userId: targetUserId,
+        restId: targetRestId,
+        phone: targetPhone,
+        openTime: finalOpenTime,
+        closeTime: finalCloseTime,
+        openTime2: finalOpenTime2,
+        closeTime2: finalCloseTime2,
+        timings: remainingSlots,
+      });
+      showCustomAlert('2nd timing slot removed successfully!', 'success');
+      if (typeof refreshRestaurantInfo === 'function') {
+        refreshRestaurantInfo().catch(() => {});
+      }
+    } catch (err) {
+      console.error('Error removing slot:', err);
+      showCustomAlert('Timing slot removed', 'success');
     } finally {
       setSaving(false);
     }
@@ -339,8 +502,34 @@ export default function RestaurantProfileScreen() {
   const phoneVal = activeData?.phone || activeData?.mobileNumber || restaurantInfo?.phone || userData?.phone || '';
   const addressVal = activeData?.address || activeData?.location || activeData?.restLocation || restaurantInfo?.address || userData?.address || '';
   const fssaiVal = activeData?.fssai || restaurantInfo?.fssai || userData?.fssai || '';
-  const openTimeVal = customOpenTime || activeData?.openTime || restaurantInfo?.openTime || userData?.openTime || '10:00';
-  const closeTimeVal = customCloseTime || activeData?.closeTime || restaurantInfo?.closeTime || userData?.closeTime || '17:30';
+  const getEffectiveTimings = () => {
+    if (customTimings && Array.isArray(customTimings)) {
+      return customTimings;
+    }
+    const rawArr = activeData?.timings || restaurantInfo?.timings || userData?.timings;
+    if (Array.isArray(rawArr) && rawArr.length > 0) {
+      return rawArr.map((t) => ({
+        openTime: t.openTime || '10:00',
+        closeTime: t.closeTime || '17:30',
+      }));
+    }
+    const slot1Open = activeData?.openTime || restaurantInfo?.openTime || userData?.openTime || '10:00';
+    const slot1Close = activeData?.closeTime || restaurantInfo?.closeTime || userData?.closeTime || '17:30';
+    const list = [{ openTime: slot1Open, closeTime: slot1Close }];
+    const slot2Open = activeData?.openTime2 || restaurantInfo?.openTime2 || userData?.openTime2;
+    const slot2Close = activeData?.closeTime2 || restaurantInfo?.closeTime2 || userData?.closeTime2;
+    if (slot2Open || slot2Close) {
+      list.push({
+        openTime: slot2Open || '18:00',
+        closeTime: slot2Close || '23:00',
+      });
+    }
+    return list;
+  };
+
+  const timingsList = getEffectiveTimings();
+  const slot1 = timingsList[0] || { openTime: '10:00', closeTime: '17:30' };
+  const slot2 = timingsList[1] || null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -430,37 +619,143 @@ export default function RestaurantProfileScreen() {
                 </View>
               </View>
 
-              {/* Opening Time Pill */}
-              <View style={styles.detailPillCard}>
-                <View style={styles.detailIconCircle}>
-                  <Ionicons name="time-outline" size={18} color="#111111" />
+              {/* Operating Timings Section */}
+              <View style={styles.timingsSectionContainer}>
+                {/* Timings Section Header with + Add 2nd Timing Button */}
+                <View style={styles.timingsSectionHeader}>
+                  <View style={styles.timingsHeaderLeft}>
+                    <Ionicons name="time" size={17} color="#111111" />
+                    <Text style={styles.timingsHeaderTitle}>OPERATING TIMINGS</Text>
+                  </View>
+                  {!slot2 && (
+                    <TouchableOpacity
+                      style={styles.addTimingHeaderBtn}
+                      onPress={() => handleOpenModal(1)}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="add" size={16} color="#FFFFFF" />
+                      <Text style={styles.addTimingHeaderBtnText}>Add 2nd Timing</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <View style={styles.detailTextCol}>
-                  <Text style={styles.detailLabelText}>OPENING TIME</Text>
-                  <Text style={styles.detailValueText}>{openTimeVal}</Text>
-                </View>
-              </View>
 
-              {/* Closing Time Pill */}
-              <View style={styles.detailPillCard}>
-                <View style={styles.detailIconCircle}>
-                  <Ionicons name="time-outline" size={18} color="#111111" />
-                </View>
-                <View style={styles.detailTextCol}>
-                  <Text style={styles.detailLabelText}>CLOSING TIME</Text>
-                  <Text style={styles.detailValueText}>{closeTimeVal}</Text>
-                </View>
-              </View>
+                {/* 1st Open & Close Timing Card */}
+                <View style={styles.timingSlotGroup}>
+                  <View style={styles.slotGroupHeader}>
+                    <View style={styles.slotBadge}>
+                      <Text style={styles.slotBadgeText}>1ST TIMING (SLOT 1)</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.slotEditIconBtn}
+                      onPress={() => handleOpenModal(0)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="pencil" size={13} color="#111111" />
+                      <Text style={styles.slotEditText}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
 
-              {/* Edit Timings Action Button */}
-              <TouchableOpacity
-                style={styles.editTimingsButton}
-                onPress={handleOpenModal}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="pencil" size={18} color="#FFFFFF" />
-                <Text style={styles.editTimingsText}>Edit Timings</Text>
-              </TouchableOpacity>
+                  {/* 1st Opening Time Pill */}
+                  <View style={styles.detailPillCard}>
+                    <View style={styles.detailIconCircle}>
+                      <Ionicons name="sunny-outline" size={18} color="#D97706" />
+                    </View>
+                    <View style={styles.detailTextCol}>
+                      <Text style={styles.detailLabelText}>1ST OPENING TIME</Text>
+                      <Text style={styles.detailValueText}>{slot1.openTime || '10:00'}</Text>
+                    </View>
+                  </View>
+
+                  {/* 1st Closing Time Pill */}
+                  <View style={styles.detailPillCard}>
+                    <View style={styles.detailIconCircle}>
+                      <Ionicons name="moon-outline" size={18} color="#4F46E5" />
+                    </View>
+                    <View style={styles.detailTextCol}>
+                      <Text style={styles.detailLabelText}>1ST CLOSING TIME</Text>
+                      <Text style={styles.detailValueText}>{slot1.closeTime || '17:30'}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 2nd Open & Close Timing Card or + Add Button */}
+                {slot2 ? (
+                  <View style={styles.timingSlotGroup}>
+                    <View style={styles.slotGroupHeader}>
+                      <View style={[styles.slotBadge, styles.slotBadgeSecondary]}>
+                        <Text style={[styles.slotBadgeText, styles.slotBadgeTextSecondary]}>
+                          2ND TIMING (SLOT 2)
+                        </Text>
+                      </View>
+                      <View style={styles.slotActionBtnsRow}>
+                        <TouchableOpacity
+                          style={styles.slotEditIconBtn}
+                          onPress={() => handleOpenModal(1)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="pencil" size={13} color="#111111" />
+                          <Text style={styles.slotEditText}>Edit</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.slotDeleteIconBtn}
+                          onPress={() => handleDeleteSlot(1)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* 2nd Opening Time Pill */}
+                    <View style={styles.detailPillCard}>
+                      <View style={styles.detailIconCircle}>
+                        <Ionicons name="sunny-outline" size={18} color="#D97706" />
+                      </View>
+                      <View style={styles.detailTextCol}>
+                        <Text style={styles.detailLabelText}>2ND OPENING TIME</Text>
+                        <Text style={styles.detailValueText}>{slot2.openTime || '18:00'}</Text>
+                      </View>
+                    </View>
+
+                    {/* 2nd Closing Time Pill */}
+                    <View style={styles.detailPillCard}>
+                      <View style={styles.detailIconCircle}>
+                        <Ionicons name="moon-outline" size={18} color="#4F46E5" />
+                      </View>
+                      <View style={styles.detailTextCol}>
+                        <Text style={styles.detailLabelText}>2ND CLOSING TIME</Text>
+                        <Text style={styles.detailValueText}>{slot2.closeTime || '23:00'}</Text>
+                      </View>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.addSecondSlotCard}
+                    onPress={() => handleOpenModal(1)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.addSlotIconCircle}>
+                      <Ionicons name="add" size={20} color="#FFFFFF" />
+                    </View>
+                    <View style={styles.addSlotTextCol}>
+                      <Text style={styles.addSlotTitle}>+ Add 2nd Timing Slot</Text>
+                      <Text style={styles.addSlotSubtitle}>
+                        Tap to add 2nd shift open & close timings
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+
+                {/* Edit Timings Action Button */}
+                <TouchableOpacity
+                  style={styles.editTimingsButton}
+                  onPress={() => handleOpenModal(0)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="pencil" size={18} color="#FFFFFF" />
+                  <Text style={styles.editTimingsText}>Edit Timings</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </>
         )}
@@ -532,8 +827,80 @@ export default function RestaurantProfileScreen() {
             {/* Modal Heading & Subtitle */}
             <Text style={styles.clockModalTitle}>Edit Timings</Text>
             <Text style={styles.clockModalSubtitle}>
-              Select opening and closing times using the scroll selectors
+              Select opening and closing times using the clock selector
             </Text>
+
+            {/* Slot Selector Row: [ 1st Timing ] [ 2nd Timing ] or [ + Add 2nd Timing ] */}
+            <View style={styles.slotModalTabsRow}>
+              <TouchableOpacity
+                style={[styles.slotModalTabBtn, activeSlotIdx === 0 && styles.slotModalTabBtnActive]}
+                onPress={() => handleSwitchSlot(0)}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name="time-outline"
+                  size={14}
+                  color={activeSlotIdx === 0 ? '#FFFFFF' : '#666666'}
+                />
+                <Text
+                  style={[
+                    styles.slotModalTabText,
+                    activeSlotIdx === 0 && styles.slotModalTabTextActive,
+                  ]}
+                >
+                  1st Timing
+                </Text>
+              </TouchableOpacity>
+
+              {modalSlots.length > 1 ? (
+                <TouchableOpacity
+                  style={[
+                    styles.slotModalTabBtn,
+                    activeSlotIdx === 1 && styles.slotModalTabBtnActive,
+                  ]}
+                  onPress={() => handleSwitchSlot(1)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="time-outline"
+                    size={14}
+                    color={activeSlotIdx === 1 ? '#FFFFFF' : '#666666'}
+                  />
+                  <Text
+                    style={[
+                      styles.slotModalTabText,
+                      activeSlotIdx === 1 && styles.slotModalTabTextActive,
+                    ]}
+                  >
+                    2nd Timing
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.slotModalAddBtn}
+                  onPress={handleAddSlotInModal}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="add-circle" size={16} color="#2E7D32" />
+                  <Text style={styles.slotModalAddText}>+ Add 2nd Timing</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Active Slot Indicator & Remove Button inside Modal */}
+            {activeSlotIdx === 1 && (
+              <View style={styles.slotIndicatorRow}>
+                <Text style={styles.slotIndicatorText}>Editing 2nd Shift Timings</Text>
+                <TouchableOpacity
+                  onPress={() => handleRemoveSlotInModal(1)}
+                  activeOpacity={0.7}
+                  style={styles.removeSlotInModalBtn}
+                >
+                  <Ionicons name="trash-outline" size={12} color="#EF4444" />
+                  <Text style={styles.removeSlotInModalText}>Remove 2nd</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Top Tab Switcher: Opening vs Closing */}
             <View style={styles.tabContainer}>
@@ -1154,5 +1521,231 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+
+  /* Multi-Timings Section Styles */
+  timingsSectionContainer: {
+    marginTop: 4,
+    gap: 10,
+  },
+  timingsSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginTop: 8,
+    marginBottom: 2,
+  },
+  timingsHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  timingsHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#333333',
+    letterSpacing: 0.8,
+  },
+  addTimingHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E1E1E',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    gap: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  addTimingHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  timingSlotGroup: {
+    backgroundColor: '#FAF7EE',
+    borderRadius: 20,
+    padding: 12,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#DED7C2',
+  },
+  slotGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+    marginBottom: 4,
+  },
+  slotBadge: {
+    backgroundColor: '#E8F5E9',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+  },
+  slotBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2E7D32',
+    letterSpacing: 0.6,
+  },
+  slotBadgeSecondary: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  slotBadgeTextSecondary: {
+    color: '#4F46E5',
+  },
+  slotActionBtnsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  slotEditIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E0DACB',
+  },
+  slotEditText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  slotDeleteIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  addSecondSlotCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#2E7D32',
+    borderStyle: 'dashed',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginVertical: 4,
+  },
+  addSlotIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2E7D32',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addSlotTextCol: {
+    flex: 1,
+  },
+  addSlotTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111111',
+  },
+  addSlotSubtitle: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 2,
+  },
+
+  /* Modal Slot Switcher Styles */
+  slotModalTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 12,
+    width: '100%',
+  },
+  slotModalTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECE6D6',
+    borderRadius: 16,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  slotModalTabBtnActive: {
+    backgroundColor: '#1E1E1E',
+  },
+  slotModalTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666666',
+  },
+  slotModalTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  slotModalAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    borderRadius: 16,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#A5D6A7',
+  },
+  slotModalAddText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2E7D32',
+  },
+  slotIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    backgroundColor: '#EEF2FF',
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  slotIndicatorText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4F46E5',
+  },
+  removeSlotInModalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+  },
+  removeSlotInModalText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#EF4444',
   },
 });
